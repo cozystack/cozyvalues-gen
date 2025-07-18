@@ -17,7 +17,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/cozystack/cozyvalues-gen/readme"
+	"github.com/cozystack/cozyvalues-gen/internal/readme"
 	"github.com/spf13/pflag"
 	"go.etcd.io/etcd/version"
 	crdmarkers "sigs.k8s.io/controller-tools/pkg/crd/markers"

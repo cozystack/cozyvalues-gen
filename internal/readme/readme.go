@@ -213,8 +213,6 @@ func parseAnnotation(a string) (string, []string, string) {
 	return base, enums, raw
 }
 
-/* ---------- UPDATED PARSER: descActive flag keeps only initial comments --- */
-
 func parseMetadataComments(path string) (*Metadata, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -224,13 +222,70 @@ func parseMetadataComments(path string) (*Metadata, error) {
 
 	meta := &Metadata{}
 	reader := bufio.NewReader(f)
+
 	var current *Section
-	descActive := false // true right after @section until first @param/@field
+	descActive := false
+	var resourceParents []string
+	visited := map[string]bool{} // <----- NEW
 
 	reSection := regexp.MustCompile(`^\s*##\s*@section\s+(.+)$`)
 	reParam := regexp.MustCompile(`^\s*##\s*@param\s+([^\s]+)\s+\{([^\}]+)\}\s*(.*)$`)
 	reField := regexp.MustCompile(`^\s*##\s*@field\s+([^\s]+)\s+\{([^\}]+)\}\s*(.*)$`)
 	reFree := regexp.MustCompile(`^\s*##\s?(.*)$`)
+
+	var addParam func(name, ann, desc string, inSection *Section, validate bool)
+	addParam = func(name, ann, desc string, inSection *Section, validate bool) {
+		if strings.HasPrefix(name, "resources/") || strings.HasPrefix(name, "resources.") {
+			trimmed := strings.TrimPrefix(strings.TrimPrefix(name, "resources/"), "resources.")
+
+			targets := make([]string, len(resourceParents))
+			copy(targets, resourceParents)
+			if len(targets) == 0 {
+				targets = []string{"resources"}
+			}
+
+			for _, rp := range targets {
+				full := rp + "." + trimmed
+				if visited[full] {
+					continue
+				}
+				base, enum, raw := parseAnnotation(ann)
+				p := NewParameter(full)
+				p.Type, p.DisplayType, p.Description, p.Validate = base, raw, desc, validate
+				if len(enum) > 0 {
+					p.Modifiers = append(p.Modifiers, "enum:"+strings.Join(enum, ","))
+				}
+				if inSection != nil {
+					p.Section = inSection.Name
+					inSection.Parameters = append(inSection.Parameters, p)
+				}
+				meta.AddParameter(p)
+				visited[full] = true
+			}
+			return
+		}
+
+		if visited[name] {
+			return
+		}
+		visited[name] = true
+
+		base, enum, raw := parseAnnotation(ann)
+		p := NewParameter(name)
+		p.Type, p.DisplayType, p.Description, p.Validate = base, raw, desc, validate
+		if len(enum) > 0 {
+			p.Modifiers = append(p.Modifiers, "enum:"+strings.Join(enum, ","))
+		}
+		if inSection != nil {
+			p.Section = inSection.Name
+			inSection.Parameters = append(inSection.Parameters, p)
+		}
+		meta.AddParameter(p)
+
+		if base == "object" && (raw == "resources" || strings.HasSuffix(raw, "/resources")) {
+			resourceParents = append(resourceParents, name)
+		}
+	}
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -244,46 +299,17 @@ func parseMetadataComments(path string) (*Metadata, error) {
 			title := reSection.FindStringSubmatch(trim)[1]
 			current = &Section{Name: title}
 			meta.AddSection(current)
-			descActive = true // start capturing description
+			descActive = true
 
 		case reParam.MatchString(trim):
 			descActive = false
 			sm := reParam.FindStringSubmatch(trim)
-			name, ann, desc := sm[1], sm[2], sm[3]
-			base, enum, raw := parseAnnotation(ann)
-
-			p := NewParameter(name)
-			p.Type = base
-			p.DisplayType = raw
-			p.Description = desc
-			if len(enum) > 0 {
-				p.Modifiers = append(p.Modifiers, "enum:"+strings.Join(enum, ","))
-			}
-			if current != nil {
-				p.Section = current.Name
-				current.Parameters = append(current.Parameters, p)
-			}
-			meta.AddParameter(p)
+			addParam(sm[1], sm[2], sm[3], current, true)
 
 		case reField.MatchString(trim):
 			descActive = false
 			sm := reField.FindStringSubmatch(trim)
-			name, ann, desc := sm[1], sm[2], sm[3]
-			base, enum, raw := parseAnnotation(ann)
-
-			p := NewParameter(name)
-			p.Type = base
-			p.DisplayType = raw
-			p.Description = desc
-			p.Validate = false
-			if len(enum) > 0 {
-				p.Modifiers = append(p.Modifiers, "enum:"+strings.Join(enum, ","))
-			}
-			if current != nil {
-				p.Section = current.Name
-				current.Parameters = append(current.Parameters, p)
-			}
-			meta.AddParameter(p)
+			addParam(sm[1], sm[2], sm[3], current, false)
 
 		case current != nil && descActive && reFree.MatchString(trim):
 			txt := reFree.FindStringSubmatch(trim)[1]
@@ -351,14 +377,19 @@ func displayPath(raw string, aliases aliasMap) string {
 	if len(segs) == 0 {
 		return raw
 	}
+
 	first := segs[0]
-	out := []string{}
+	out := make([]string, 0, len(segs))
+
 	if ph, ok := aliases[first]; ok {
+		ph = strings.ReplaceAll(ph, "/", ".")
 		out = append(out, ph)
 	} else {
 		out = append(out, first)
 	}
+
 	out = append(out, segs[1:]...)
+
 	return reArrayIdx.ReplaceAllString(strings.Join(out, "."), "[]")
 }
 
