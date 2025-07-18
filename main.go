@@ -8,7 +8,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"go/format"
 	"os"
@@ -19,6 +18,7 @@ import (
 	"unicode"
 
 	"github.com/cozystack/cozyvalues-gen/readme"
+	"github.com/spf13/pflag"
 	crdmarkers "sigs.k8s.io/controller-tools/pkg/crd/markers"
 
 	"go.etcd.io/etcd/version"
@@ -50,6 +50,15 @@ type raw struct {
 	defaultVal  string
 	description string
 }
+
+var (
+	inValues  string
+	module    string
+	outGo     string
+	outCRD    string
+	outSchema string
+	outReadme string
+)
 
 var (
 	re       = regexp.MustCompile(`^##\s+@(param|field)\s+([^\s]+)\s+\{([^}]+)\}\s+(.+)$`)
@@ -423,24 +432,25 @@ func sortedKeys[M ~map[K]V, K comparable, V any](m M) []K {
 /*  Entry point                                                                */
 /* -------------------------------------------------------------------------- */
 
+func init() {
+	pflag.StringVarP(&inValues, "values", "v", "values.yaml", "annotated Helm values.yaml")
+	pflag.StringVarP(&module, "module", "m", "values", "package name")
+	pflag.StringVarP(&outGo, "debug-go", "g", "", "output *.go file")
+	pflag.StringVarP(&outCRD, "debug-crd", "c", "", "output CRD YAML")
+	pflag.StringVarP(&outSchema, "schema", "s", "", "output values.schema.json")
+	pflag.StringVarP(&outReadme, "readme", "r", "", "update README.md Parameters section")
+}
+
 // main parses flags, drives the generator and writes requested artifacts.
 func main() {
-	var (
-		inValues  = flag.String("values", "values.yaml", "annotated Helm values.yaml")
-		module    = flag.String("module", "values", "package name")
-		outGo     = flag.String("debug-go", "", "output *.go file")
-		outCRD    = flag.String("debug-crd", "", "output CRD YAML")
-		outSchema = flag.String("schema", "", "output values.schema.json")
-		outReadme = flag.String("readme", "", "update README.md Parameters section")
-	)
-	flag.Parse()
+	pflag.Parse()
 
-	if *outGo == "" && *outCRD == "" && *outSchema == "" {
+	if outGo == "" && outCRD == "" && outSchema == "" {
 		fmt.Printf("no output specified: use -out-go, -out-crd or -out-schema\n")
 		os.Exit(1)
 	}
 
-	rows, err := parse(*inValues)
+	rows, err := parse(inValues)
 	if err != nil {
 		fmt.Printf("parse: %v\n", err)
 		os.Exit(1)
@@ -448,7 +458,7 @@ func main() {
 	tree := build(rows)
 
 	// Pull defaults directly from YAML.
-	yamlRaw, _ := os.ReadFile(*inValues)
+	yamlRaw, _ := os.ReadFile(inValues)
 	var yamlRoot map[string]interface{}
 	_ = sigyaml.Unmarshal(yamlRaw, &yamlRoot)
 	populateDefaults(tree, yamlRoot, tree.child)
@@ -458,22 +468,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	tmpdir, goFilePath, err := writeGeneratedGoAndStub(tree, *module)
+	tmpdir, goFilePath, err := writeGeneratedGoAndStub(tree, module)
 	if err != nil {
 		fmt.Printf("write generated: %v\n", err)
 		os.Exit(1)
 	}
 	defer os.RemoveAll(tmpdir)
 
-	if *outGo != "" {
+	if outGo != "" {
 		code, _ := os.ReadFile(goFilePath)
-		_ = os.MkdirAll(filepath.Dir(*outGo), 0o755)
-		_ = os.WriteFile(*outGo, code, 0o644)
-		fmt.Printf("write Go structs:\n", *outGo)
+		_ = os.MkdirAll(filepath.Dir(outGo), 0o755)
+		_ = os.WriteFile(outGo, code, 0o644)
+		fmt.Printf("write Go structs:\n", outGo)
 	}
 
 	var crdBytes []byte
-	if *outCRD != "" || *outSchema != "" {
+	if outCRD != "" || outSchema != "" {
 		crdBytes, err = cg(filepath.Dir(goFilePath))
 		if err != nil {
 			fmt.Printf("controller-gen: %v\n", err)
@@ -481,24 +491,24 @@ func main() {
 		}
 	}
 
-	if *outCRD != "" {
-		_ = os.MkdirAll(filepath.Dir(*outCRD), 0o755)
-		_ = os.WriteFile(*outCRD, crdBytes, 0o644)
-		fmt.Printf("write CRD resource: %s\n", *outCRD)
+	if outCRD != "" {
+		_ = os.MkdirAll(filepath.Dir(outCRD), 0o755)
+		_ = os.WriteFile(outCRD, crdBytes, 0o644)
+		fmt.Printf("write CRD resource: %s\n", outCRD)
 	}
-	if *outSchema != "" {
-		if err := writeValuesSchema(crdBytes, *outSchema); err != nil {
+	if outSchema != "" {
+		if err := writeValuesSchema(crdBytes, outSchema); err != nil {
 			fmt.Printf("values schema: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("write JSON schema: %s\n", *outSchema)
+		fmt.Printf("write JSON schema: %s\n", outSchema)
 	}
-	if *outReadme != "" {
-		if err := readme.UpdateParametersSection(*inValues, *outReadme); err != nil {
+	if outReadme != "" {
+		if err := readme.UpdateParametersSection(inValues, outReadme); err != nil {
 			fmt.Printf("README: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("update README parameters: %s\n", *outReadme)
+		fmt.Printf("update README parameters: %s\n", outReadme)
 	}
 }
 

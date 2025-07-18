@@ -3,6 +3,7 @@ module github.com/cozystack/cozyvalues-gen
 go 1.24.0
 
 require (
+	github.com/spf13/pflag v1.0.6
 	go.etcd.io/etcd v3.3.27+incompatible
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/apiextensions-apiserver v0.33.3
