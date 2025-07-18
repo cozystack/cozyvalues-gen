@@ -19,9 +19,9 @@ import (
 
 	"github.com/cozystack/cozyvalues-gen/readme"
 	"github.com/spf13/pflag"
+	"go.etcd.io/etcd/version"
 	crdmarkers "sigs.k8s.io/controller-tools/pkg/crd/markers"
 
-	"go.etcd.io/etcd/version"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"sigs.k8s.io/controller-tools/pkg/crd"
 	"sigs.k8s.io/controller-tools/pkg/loader"
@@ -50,6 +50,8 @@ type raw struct {
 	defaultVal  string
 	description string
 }
+
+var Version = "dev"
 
 var (
 	inValues  string
@@ -433,6 +435,7 @@ func sortedKeys[M ~map[K]V, K comparable, V any](m M) []K {
 /* -------------------------------------------------------------------------- */
 
 func init() {
+	pflag.BoolP("version", "V", false, "print version and exit")
 	pflag.StringVarP(&inValues, "values", "v", "values.yaml", "annotated Helm values.yaml")
 	pflag.StringVarP(&module, "module", "m", "values", "package name")
 	pflag.StringVarP(&outGo, "debug-go", "g", "", "output *.go file")
@@ -441,13 +444,12 @@ func init() {
 	pflag.StringVarP(&outReadme, "readme", "r", "", "update README.md Parameters section")
 }
 
-// main parses flags, drives the generator and writes requested artifacts.
 func main() {
 	pflag.Parse()
 
-	if outGo == "" && outCRD == "" && outSchema == "" {
-		fmt.Printf("no output specified: use -out-go, -out-crd or -out-schema\n")
-		os.Exit(1)
+	if v, _ := pflag.CommandLine.GetBool("version"); v {
+		fmt.Println("Version:", Version)
+		os.Exit(0)
 	}
 
 	rows, err := parse(inValues)
@@ -468,18 +470,27 @@ func main() {
 		os.Exit(1)
 	}
 
-	tmpdir, goFilePath, err := writeGeneratedGoAndStub(tree, module)
-	if err != nil {
-		fmt.Printf("write generated: %v\n", err)
-		os.Exit(1)
+	var (
+		tmpdir     string
+		goFilePath string
+	)
+
+	// Generate Go files only if required
+	if outGo != "" || outCRD != "" || outSchema != "" {
+		var err error
+		tmpdir, goFilePath, err = writeGeneratedGoAndStub(tree, module)
+		if err != nil {
+			fmt.Printf("write generated: %v\n", err)
+			os.Exit(1)
+		}
+		defer os.RemoveAll(tmpdir)
 	}
-	defer os.RemoveAll(tmpdir)
 
 	if outGo != "" {
 		code, _ := os.ReadFile(goFilePath)
 		_ = os.MkdirAll(filepath.Dir(outGo), 0o755)
 		_ = os.WriteFile(outGo, code, 0o644)
-		fmt.Printf("write Go structs:\n", outGo)
+		fmt.Printf("write Go structs: %s\n", outGo)
 	}
 
 	var crdBytes []byte
@@ -496,6 +507,7 @@ func main() {
 		_ = os.WriteFile(outCRD, crdBytes, 0o644)
 		fmt.Printf("write CRD resource: %s\n", outCRD)
 	}
+
 	if outSchema != "" {
 		if err := writeValuesSchema(crdBytes, outSchema); err != nil {
 			fmt.Printf("values schema: %v\n", err)
@@ -503,6 +515,7 @@ func main() {
 		}
 		fmt.Printf("write JSON schema: %s\n", outSchema)
 	}
+
 	if outReadme != "" {
 		if err := readme.UpdateParametersSection(inValues, outReadme); err != nil {
 			fmt.Printf("README: %v\n", err)
@@ -627,8 +640,7 @@ func cg(pkgDir string) ([]byte, error) {
 		if crdRaw.ObjectMeta.Annotations == nil {
 			crdRaw.ObjectMeta.Annotations = map[string]string{}
 		}
-		crdRaw.ObjectMeta.Annotations["controller-gen.kubebuilder.io/version"] =
-			version.Version
+		crdRaw.ObjectMeta.Annotations["controller-gen.kubebuilder.io/version"] = version.Version
 		crd.FixTopLevelMetadata(crdRaw)
 
 		data, err := sigyaml.Marshal(&crdRaw)
