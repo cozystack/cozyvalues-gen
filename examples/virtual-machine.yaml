@@ -105,8 +105,8 @@ bootstrap:
   oldName: ""
 
 ## @param resources {resources} Resources
-## @field resources/cpu {*string} CPU
-## @field resources/memory {*string} Memory
+## @field resources/cpu {*quantity} CPU
+## @field resources/memory {*quantity} Memory
 resources: {}
  # resources:
  #   cpu: 4000m

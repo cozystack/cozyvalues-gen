@@ -18,8 +18,8 @@ host: ""
 ## @field vmselect/maxAllowed {resources} Maximum allowed resources for vminsert component
 ## @field vmstorage/minAllowed {resources} Minimum allowed resources for vminsert component
 ## @field vmstorage/maxAllowed {resources} Maximum allowed resources for vminsert component
-## @field resources/cpu {string} CPU resources
-## @field resources/memory {string} Memory resources
+## @field resources/cpu {quantity} CPU resources
+## @field resources/memory {quantity} Memory resources
 ##
 ## Example:
 ## metricsStorages:

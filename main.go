@@ -230,7 +230,8 @@ func (g *gen) addImp(p string) {
 // isPrimitive returns true for built-in Go scalar types.
 func isPrimitive(t string) bool {
 	switch t {
-	case "string", "bool", "int", "int32", "int64", "float32", "float64":
+	case "string", "bool", "int", "int32", "int64", "float32", "float64",
+		"quantity":
 		return true
 	default:
 		return false
@@ -264,12 +265,8 @@ func (g *gen) resolve(raw string) string {
 	}
 	if strings.Contains(raw, ".") { // external
 		switch raw {
-		case "resource.Quantity":
-			g.addImp("k8s.io/apimachinery/pkg/api/resource")
-			return "resource.Quantity"
-		case "time.Duration":
-			g.addImp("time")
-			return "time.Duration"
+		case "quantity":
+			return "string"
 		default:
 			if idx := strings.LastIndex(raw, "."); idx != -1 {
 				g.addImp(raw[:idx])
@@ -337,6 +334,13 @@ func (g *gen) writeStruct(n *node) {
 		for _, c := range n.child {
 			g.writeStruct(c)
 		}
+
+		g.buf.WriteString(`
+// +kubebuilder:validation:Pattern=` + "`" + `^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$` + "`" + `
+// +kubebuilder:validation:XIntOrString
+type quantity string
+
+`)
 		return
 	}
 
@@ -364,6 +368,7 @@ func (g *gen) emitField(c *node) {
 	if c.comment != "" {
 		g.buf.WriteString("    // " + c.comment + "\n")
 	}
+
 	if len(c.enums) > 0 {
 		g.buf.WriteString("    // +kubebuilder:validation:Enum=" + quoteEnums(c.enums) + "\n")
 	}
@@ -740,7 +745,7 @@ func populateDefaults(n *node, y interface{}, aliases map[string]*node) {
 func formatDefault(val, typ string) string {
 	t := strings.TrimPrefix(typ, "*")
 	switch {
-	case t == "string":
+	case t == "string" || t == "quantity":
 		return fmt.Sprintf("%q", val)
 	case strings.HasPrefix(t, "[]"), strings.HasPrefix(t, "map["):
 		return "" // no defaults for composite types

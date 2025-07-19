@@ -58,7 +58,8 @@ func defaultConfig() *Config {
 func isPrimitive(t string) bool {
 	switch t {
 	case "string", "bool", "boolean", "int", "int32", "int64",
-		"float32", "float64", "number", "integer", "nil":
+		"float32", "float64", "number", "integer", "nil",
+		"quantity":
 		return true
 	default:
 		return false
