@@ -26,7 +26,7 @@ graph LR
 - controller-gen compiles that code, emitting a CRD.
 - The tool trims the CRD down to a Helm-compatible schema.
 
-Usage (one-liner)
+### Usage (one-liner)
 
 ```
 cozyvalues-gen \
@@ -35,5 +35,25 @@ cozyvalues-gen \
 ```
 
 See `cozyvalues-gen` -h for all flags.
+
+## Installation
+
+### Requirements
+- **Go toolchain** must be installed and accessible via `$PATH`.
+
+
+### Using `go install`
+
+```console
+go install github.com/cozystack/cozyvalues-gen@latest
+```
+
+The binary lands in `$(go env GOPATH)/bin` (usually `~/go/bin`). Make sure that directory is on your `$PATH`.
+
+### Download a pre‑built release binary
+
+Head over to [https://github.com/cozystack/cozyvalues-gen/releases](https://github.com/cozystack/cozyvalues-gen/releases), grab the archive for your OS/arch, unpack it somewhere on your `$PATH`.
+
+---
 
 Created for the Cozystack project. 🚀
