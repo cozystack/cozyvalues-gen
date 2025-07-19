@@ -13,7 +13,7 @@ builds:
       - windows
       - darwin
     ldflags:
-      - -X main.version={{.Version}}
+      - -X main.Version={{.Version}}
 
 archives:
   - name_template: >-
