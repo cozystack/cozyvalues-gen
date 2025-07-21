@@ -11,8 +11,8 @@ replicas: 2
 storageClass: ""
 
 ## @param postgresql {postgresql} PostgreSQL server configuration
-## @field postgresql/parameters {postgresqlParameters} PostgreSQL server parameters
-## @field postgresqlParameters/max_connections {int} Determines the maximum number of concurrent connections to the database server. The default is typically 100 connections
+## @field postgresql.parameters {postgresqlParameters} PostgreSQL server parameters
+## @field postgresqlParameters.max_connections {int} Determines the maximum number of concurrent connections to the database server. The default is typically 100 connections
 ##
 postgresql:
   parameters:
@@ -20,8 +20,8 @@ postgresql:
 
 ## Configuration for the quorum-based synchronous replication
 ## @param quorum {quorum} Quorum configuration for synchronous replication
-## @field quorum/minSyncReplicas {int} Minimum number of synchronous replicas that must acknowledge a transaction before it is considered committed.
-## @field quorum/maxSyncReplicas {int} Maximum number of synchronous replicas that can acknowledge a transaction (must be lower than the number of instances).
+## @field quorum.minSyncReplicas {int} Minimum number of synchronous replicas that must acknowledge a transaction before it is considered committed.
+## @field quorum.maxSyncReplicas {int} Maximum number of synchronous replicas that can acknowledge a transaction (must be lower than the number of instances).
 quorum:
   minSyncReplicas: 0
   maxSyncReplicas: 0
@@ -29,8 +29,8 @@ quorum:
 ## @section Configuration parameters
 
 ## @param users {map[string]user} Users configuration
-## @field user/password {*string} Password for the user
-## @field user/replication {*bool} Whether the user has replication privileges
+## @field user.password {*string} Password for the user
+## @field user.replication {*bool} Whether the user has replication privileges
 ##
 ## Example:
 ## users:
@@ -46,10 +46,10 @@ quorum:
 users: {}
 
 ## @param databases {map[string]database} Databases configuration
-## @field database/roles {*databaseRoles} Roles for the database
-## @field databaseRoles/admin {[]string} List of users with admin privileges
-## @field databaseRoles/readonly {[]string} List of users with read-only privileges
-## @field database/extensions {[]string} Extensions enabled for the database
+## @field database.roles {*databaseRoles} Roles for the database
+## @field databaseRoles.admin {[]string} List of users with admin privileges
+## @field databaseRoles.readonly {[]string} List of users with read-only privileges
+## @field database.extensions {[]string} Extensions enabled for the database
 ##
 ## Example:
 ## databases:
@@ -71,13 +71,13 @@ databases: {}
 ## @section Backup parameters
 
 ## @param backup {backup} Backup configuration
-## @field backup/enabled {bool} Enable regular backups
-## @field backup/schedule {string} Cron schedule for automated backups
-## @field backup/retentionPolicy {string} Retention policy
-## @field backup/destinationPath {string} Path to store the backup (i.e. s3://bucket/path/to/folder)
-## @field backup/endpointURL {string} S3 Endpoint used to upload data to the cloud
-## @field backup/s3AccessKey {string} Access key for S3, used for authentication
-## @field backup/s3SecretKey {string} Secret key for S3, used for authentication
+## @field backup.enabled {bool} Enable regular backups
+## @field backup.schedule {string} Cron schedule for automated backups
+## @field backup.retentionPolicy {string} Retention policy
+## @field backup.destinationPath {string} Path to store the backup (i.e. s3://bucket/path/to/folder)
+## @field backup.endpointURL {string} S3 Endpoint used to upload data to the cloud
+## @field backup.s3AccessKey {string} Access key for S3, used for authentication
+## @field backup.s3SecretKey {string} Secret key for S3, used for authentication
 backup:
   enabled: false
   retentionPolicy: 30d
@@ -90,9 +90,9 @@ backup:
 ## @section Bootstrap parameters
 
 ## @param bootstrap {bootstrap} Bootstrap configuration
-## @field bootstrap/enabled {bool} Restore database cluster from a backup
-## @field bootstrap/recoveryTime {string} Timestamp (PITR) up to which recovery will proceed, expressed in RFC 3339 format. If left empty, will restore latest
-## @field bootstrap/oldName {string} Name of database cluster before deleting
+## @field bootstrap.enabled {bool} Restore database cluster from a backup
+## @field bootstrap.recoveryTime {string} Timestamp (PITR) up to which recovery will proceed, expressed in RFC 3339 format. If left empty, will restore latest
+## @field bootstrap.oldName {string} Name of database cluster before deleting
 ##
 bootstrap:
   enabled: false
@@ -101,8 +101,8 @@ bootstrap:
   oldName: ""
 
 ## @param resources {resources} Resources
-## @field resources/cpu {*quantity} CPU
-## @field resources/memory {*quantity} Memory
+## @field resources.cpu {*quantity} CPU
+## @field resources.memory {*quantity} Memory
 resources: {}
  # resources:
  #   cpu: 4000m
