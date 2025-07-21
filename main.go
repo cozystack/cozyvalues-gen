@@ -109,9 +109,13 @@ func parse(file string) ([]raw, error) {
 			}
 		}
 
+		// support both slash- and dot-separated paths in the annotation key
+		segments := strings.FieldsFunc(m[2], func(r rune) bool {
+			return r == '/' || r == '.'
+		})
 		r := raw{
 			k:           k,
-			path:        strings.Split(m[2], "/"),
+			path:        segments,
 			typeExpr:    typPart,
 			enums:       enums,
 			defaultVal:  def,
