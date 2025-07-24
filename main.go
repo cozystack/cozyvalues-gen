@@ -235,7 +235,7 @@ func (g *gen) addImp(p string) {
 func isPrimitive(t string) bool {
 	switch t {
 	case "string", "bool", "int", "int32", "int64", "float32", "float64",
-		"quantity":
+		"quantity", "duration":
 		return true
 	default:
 		return false
@@ -269,7 +269,7 @@ func (g *gen) resolve(raw string) string {
 	}
 	if strings.Contains(raw, ".") { // external
 		switch raw {
-		case "quantity":
+		case "quantity", "duration":
 			return "string"
 		default:
 			if idx := strings.LastIndex(raw, "."); idx != -1 {
@@ -344,6 +344,8 @@ func (g *gen) writeStruct(n *node) {
 // +kubebuilder:validation:XIntOrString
 type quantity string
 
+// +kubebuilder:validation:Pattern=` + "`" + `^-?(\d+h(\d+m)?(\d+s)?(\d+ms)?(\d+us)?(\d+µs)?(\d+ns)?|\d+m(\d+s)?(\d+ms)?(\d+us)?(\d+µs)?(\d+ns)?|\d+s(\d+ms)?(\d+us)?(\d+µs)?(\d+ns)?|\d+ms(\d+us)?(\d+µs)?(\d+ns)?|\d+us(\d+µs)?(\d+ns)?|\d+µs(\d+ns)?|\d+ns)$` + "`" + `
+type duration string
 `)
 		return
 	}
@@ -749,7 +751,7 @@ func populateDefaults(n *node, y interface{}, aliases map[string]*node) {
 func formatDefault(val, typ string) string {
 	t := strings.TrimPrefix(typ, "*")
 	switch {
-	case t == "string" || t == "quantity":
+	case t == "string" || t == "quantity" || t == "duration":
 		return fmt.Sprintf("%q", val)
 	case strings.HasPrefix(t, "[]"), strings.HasPrefix(t, "map["):
 		return "" // no defaults for composite types
