@@ -1,0 +1,90 @@
+{
+  "title": "Chart Values",
+  "type": "object",
+  "properties": {
+    "intList": {
+      "description": "A required list of integers, empty.",
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "intListMultiple": {
+      "description": "A list of integers with one value.",
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "intListNullable": {
+      "description": "A nullable list of integers, empty.",
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "intListNullableMultiple": {
+      "description": "A nullable list of integers with multiple values.",
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "intListNullableSingle": {
+      "description": "A nullable list of integers with one value.",
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "intListSingle": {
+      "description": "A list of integers with one value.",
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "stringList": {
+      "description": "A required list of strings, empty.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "stringListMultiple": {
+      "description": "A required list of strings with multiple values.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "stringListNullable": {
+      "description": "A nullable list of strings, empty.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "stringListNullableMultiple": {
+      "description": "A nullable list of strings with multiple values.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "stringListNullableSingle": {
+      "description": "A nullable list of strings with one value.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "stringListSingle": {
+      "description": "A required list of strings with one value.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

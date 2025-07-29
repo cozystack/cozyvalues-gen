@@ -1,0 +1,9 @@
+{
+  "title": "Chart Values",
+  "type": "object",
+  "properties": {
+    "test": {
+      "description": "Test variable"
+    }
+  }
+}

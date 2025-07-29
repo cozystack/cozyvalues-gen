@@ -1,0 +1,51 @@
+{
+  "title": "Chart Values",
+  "type": "object",
+  "properties": {
+    "bar": {
+      "description": "Configuration for bar",
+      "type": "object",
+      "required": [
+        "db"
+      ],
+      "properties": {
+        "db": {
+          "description": "Field with custom type declared locally",
+          "type": "object",
+          "required": [
+            "size"
+          ],
+          "properties": {
+            "size": {
+              "description": "Sub-field declared with path relative to custom type",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "foo": {
+      "description": "Configuration for foo",
+      "type": "object",
+      "required": [
+        "db"
+      ],
+      "properties": {
+        "db": {
+          "description": "Field with custom type declared locally",
+          "type": "object",
+          "required": [
+            "size"
+          ],
+          "properties": {
+            "size": {
+              "description": "Sub-field declared with path relative to custom type",
+              "type": "string",
+              "default": "10Gi"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "title": "Chart Values",
+  "type": "object",
+  "properties": {
+    "testBool": {
+      "description": "Boolean variable",
+      "type": "boolean"
+    },
+    "testBoolFalse": {
+      "description": "Boolean variable, defaults to false",
+      "type": "boolean",
+      "default": false
+    },
+    "testBoolFalseNullable": {
+      "description": "Boolean variable, defaults to false, nullable",
+      "type": "boolean",
+      "default": false
+    },
+    "testBoolNullable": {
+      "description": "Boolean variable, nullable",
+      "type": "boolean"
+    },
+    "testBoolTrue": {
+      "description": "Boolean variable, defaults to true",
+      "type": "boolean",
+      "default": true
+    },
+    "testBoolTrueNullable": {
+      "description": "Boolean variable, defaults to true, nullable",
+      "type": "boolean",
+      "default": true
+    },
+    "testInt": {
+      "description": "Integer variable",
+      "type": "integer"
+    },
+    "testIntDefault": {
+      "description": "Integer variable with default value",
+      "type": "integer",
+      "default": 10
+    },
+    "testIntDefaultNullable": {
+      "description": "Integer variable with default value, nullable",
+      "type": "integer",
+      "default": 10
+    },
+    "testIntNullable": {
+      "description": "Integer variable, nullable",
+      "type": "integer"
+    },
+    "testString": {
+      "description": "String variable",
+      "type": "string"
+    },
+    "testStringDefault": {
+      "description": "String variable with default value",
+      "type": "string",
+      "default": "string value"
+    },
+    "testStringDefaultNullable": {
+      "description": "String variable with default value, nullable",
+      "type": "string",
+      "default": "string value"
+    },
+    "testStringEmpty": {
+      "description": "String variable, empty by default",
+      "type": "string"
+    },
+    "testStringEmptyNullable": {
+      "description": "String variable, empty by default, nullable",
+      "type": "string"
+    },
+    "testStringNullable": {
+      "description": "String variable, nullable",
+      "type": "string"
+    }
+  }
+}
