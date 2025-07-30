@@ -368,11 +368,9 @@ type quantity string
 func (g *gen) emitField(c *node) {
 	field := camel(c.name)
 	typ := g.goType(c)
-
 	if c.comment != "" {
 		g.buf.WriteString("    // " + c.comment + "\n")
 	}
-
 	if len(c.enums) > 0 {
 		g.buf.WriteString("    // +kubebuilder:validation:Enum=" + quoteEnums(c.enums) + "\n")
 	}
@@ -381,13 +379,11 @@ func (g *gen) emitField(c *node) {
 			g.buf.WriteString("    // +kubebuilder:default:=" + def + "\n")
 		}
 	}
-
 	tag := "`json:\"" + c.name
 	if strings.HasPrefix(typ, "[]") || strings.HasPrefix(typ, "map[") || strings.HasPrefix(typ, "*") {
 		tag += ",omitempty"
 	}
 	tag += "\"`"
-
 	g.buf.WriteString(fmt.Sprintf("    %s %s %s\n", field, typ, tag))
 }
 
@@ -716,46 +712,75 @@ func populateDefaults(n *node, y interface{}, aliases map[string]*node) {
 			if !ok {
 				continue
 			}
-
-			isScalar := func(x interface{}) bool {
-				switch x.(type) {
-				case string, int, int64, float64, bool:
-					return true
-				default:
-					return false
+			switch yval.(type) {
+			case string, int, int64, float64, bool:
+				if child.defaultVal == "" {
+					child.defaultVal = fmt.Sprintf("%v", yval)
 				}
-			}
-
-			if isScalar(yval) && child.defaultVal == "" {
-				child.defaultVal = fmt.Sprintf("%v", yval)
-				continue
-			}
-
-			if m, ok := yval.(map[string]interface{}); ok {
-				if len(child.child) > 0 {
-					populateDefaults(child, m, aliases)
-					continue
+			default:
+				if child.defaultVal == "" {
+					serialized, _ := sigyaml.Marshal(yval)
+					child.defaultVal = string(serialized)
 				}
-				te := strings.TrimPrefix(child.typeExpr, "*")
-				if alias, ok := aliases[te]; ok {
-					populateDefaults(alias, m, aliases)
+				if m, ok := yval.(map[string]interface{}); ok {
+					if len(child.child) > 0 {
+						populateDefaults(child, m, aliases)
+						continue
+					}
+					te := strings.TrimPrefix(child.typeExpr, "*")
+					if alias, ok := aliases[te]; ok {
+						populateDefaults(alias, m, aliases)
+					}
 				}
 			}
 		}
 	}
 }
 
+func toGoLiteral(v interface{}) string {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		keys := make([]string, 0, len(val))
+		for k := range val {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, fmt.Sprintf("%q:%s", k, toGoLiteral(val[k])))
+		}
+		return fmt.Sprintf("{%s}", strings.Join(parts, ","))
+	case []interface{}:
+		parts := make([]string, 0, len(val))
+		for _, elem := range val {
+			parts = append(parts, toGoLiteral(elem))
+		}
+		return fmt.Sprintf("{%s}", strings.Join(parts, ","))
+	case string:
+		return fmt.Sprintf("%q", val)
+	case bool:
+		if val {
+			return "true"
+		}
+		return "false"
+	case int, int64, float64:
+		return fmt.Sprintf("%v", val)
+	default:
+		return fmt.Sprintf("%v", val)
+	}
+}
+
 // formatDefault converts a raw default string into a kubebuilder-ready literal.
 func formatDefault(val, typ string) string {
 	t := strings.TrimPrefix(typ, "*")
-	switch {
-	case t == "string" || t == "quantity":
+	if t == "string" || t == "quantity" {
 		return fmt.Sprintf("%q", val)
-	case strings.HasPrefix(t, "[]"), strings.HasPrefix(t, "map["):
-		return "" // no defaults for composite types
-	default:
-		return val
 	}
+	var parsed interface{}
+	if err := sigyaml.Unmarshal([]byte(val), &parsed); err == nil {
+		return toGoLiteral(parsed)
+	}
+	return val
 }
 
 // collectUndefined returns all implicitly-created types that never
