@@ -1,712 +1,397 @@
-// internal/readme/readme.go
-//
-// Public entry:
-//
-//	readme.UpdateParametersSection(valuesPath, readmePath string) error
-//
-// Generates / updates the “Parameters” table in README.md.
 package readme
 
 import (
-	"bufio"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"os"
 	"regexp"
-	"sort"
 	"strings"
 
-	yaml "gopkg.in/yaml.v3"
+	"gopkg.in/yaml.v3"
 )
 
-/* -------------------------------------------------------------------------- */
-/*  Defaults & helpers                                                        */
-/* -------------------------------------------------------------------------- */
+type Config struct{}
 
-type Config struct {
-	Comments struct{ Format string } `json:"comments"`
-	Tags     struct {
-		Param, Section, DescriptionStart, DescriptionEnd, Skip, Extra string
-	} `json:"tags"`
-	Regexp    struct{ ParamsSectionTitle string } `json:"regexp"`
-	Modifiers struct {
-		Array, Object, String, Nullable, Default string
-	} `json:"modifiers"`
+type Meta struct {
+	Sections []*Section
 }
 
-func defaultConfig() *Config {
-	cfg := &Config{}
-	cfg.Comments.Format = "##"
-	cfg.Tags.Param = "@param"
-	cfg.Tags.Section = "@section"
-	cfg.Tags.DescriptionStart = "@descriptionStart"
-	cfg.Tags.DescriptionEnd = "@descriptionEnd"
-	cfg.Tags.Skip = "@skip"
-	cfg.Tags.Extra = "@extra"
-	cfg.Modifiers.Array = "array"
-	cfg.Modifiers.Object = "object"
-	cfg.Modifiers.String = "string"
-	cfg.Modifiers.Nullable = "nullable"
-	cfg.Modifiers.Default = "default"
-	cfg.Regexp.ParamsSectionTitle = "Parameters"
-	return cfg
+type Section struct {
+	Name       string
+	Parameters []ParamMeta
+}
+
+type ParamMeta struct {
+	Name         string
+	TypeOriginal string
+	TypeName     string
+	Description  string
+}
+
+type FieldMeta struct {
+	ParentTypeName string
+	Name           string
+	Type           string
+	Description    string
+}
+
+type ParamToRender struct {
+	Path        string
+	Description string
+	Type        string
+	Value       string
+}
+
+var valuesMap map[string]interface{}
+var typeFields map[string][]FieldMeta
+
+func defaultConfig() *Config { return &Config{} }
+
+func createValuesObject(path string) (map[string]interface{}, error) {
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var vals map[string]interface{}
+	if err := yaml.Unmarshal(data, &vals); err != nil {
+		return nil, err
+	}
+	return vals, nil
+}
+
+func parseMetadataComments(path string) (*Meta, error) {
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	typeFields = make(map[string][]FieldMeta)
+	var sections []*Section
+	var current *Section
+
+	sectionRe := regexp.MustCompile(`^##\s+@section\s+(.*)$`)
+	paramRe := regexp.MustCompile(`^##\s+@param\s+(\w+)\s+\{([^}]+)\}\s+(.*)$`)
+	fieldRe := regexp.MustCompile(`^##\s+@field\s+([\w\.]+)\s+\{([^}]+)\}\s+(.*)$`)
+
+	for _, line := range strings.Split(string(data), "\n") {
+		if m := sectionRe.FindStringSubmatch(line); m != nil {
+			sec := &Section{Name: m[1]}
+			sections = append(sections, sec)
+			current = sec
+			continue
+		}
+		if m := paramRe.FindStringSubmatch(line); m != nil {
+			name, typ, desc := m[1], m[2], m[3]
+			typeName := typ
+			if strings.HasPrefix(typ, "[]") {
+				typeName = typ[2:]
+			} else if strings.HasPrefix(typ, "map[") {
+				if idx := strings.LastIndex(typ, "]"); idx != -1 && idx+1 < len(typ) {
+					typeName = typ[idx+1:]
+				}
+			}
+			pm := ParamMeta{Name: name, TypeOriginal: typ, TypeName: typeName, Description: desc}
+			if current != nil {
+				current.Parameters = append(current.Parameters, pm)
+			} else {
+				if len(sections) == 0 {
+					sections = append(sections, &Section{Name: "Parameters"})
+				}
+				sections[0].Parameters = append(sections[0].Parameters, pm)
+			}
+		} else if m := fieldRe.FindStringSubmatch(line); m != nil {
+			qual, typ, desc := m[1], m[2], m[3]
+			parts := strings.SplitN(qual, ".", 2)
+			root := parts[0]
+			field := ""
+			if len(parts) == 2 {
+				field = parts[1]
+			}
+			typeFields[root] = append(typeFields[root], FieldMeta{
+				ParentTypeName: root,
+				Name:           field,
+				Type:           typ,
+				Description:    desc,
+			})
+		}
+	}
+	return &Meta{Sections: sections}, nil
+}
+
+func buildAliasMap(params []ParamMeta) map[string]string { return map[string]string{} }
+
+func combine(vals map[string]interface{}) { valuesMap = vals }
+
+func buildParamsToRender(params []ParamMeta) []ParamToRender {
+	var out []ParamToRender
+	for _, pm := range params {
+		rawVal, exists := valuesMap[pm.Name]
+		typDisplay := normalizeType(pm.TypeOriginal)
+
+		// if the type is not primitive, always show placeholder
+		useVal := exists && (isPrimitive(pm.TypeOriginal) || strings.HasPrefix(pm.TypeOriginal, "*"))
+		val := valueString(rawVal, useVal, pm.TypeOriginal)
+
+		out = append(out, ParamToRender{
+			Path:        pm.Name,
+			Description: pm.Description,
+			Type:        typDisplay,
+			Value:       val,
+		})
+		out = append(out, traverseParam(pm, rawVal, exists)...)
+	}
+	return out
+}
+
+func traverseParam(pm ParamMeta, rawVal interface{}, exists bool) []ParamToRender {
+	var rows []ParamToRender
+	typ := pm.TypeOriginal
+	if strings.HasPrefix(typ, "[]") {
+		etype := pm.TypeName
+		items := []interface{}{}
+		if exists {
+			if s, ok := rawVal.([]interface{}); ok {
+				items = s
+			}
+		}
+		if len(items) > 0 {
+			for i, it := range items {
+				rows = append(rows, traverseByType(fmt.Sprintf("%s[%d]", pm.Name, i), it, etype)...)
+			}
+		} else {
+			rows = append(rows, traverseByType(fmt.Sprintf("%s[i]", pm.Name), map[string]interface{}{}, pm.TypeName)...)
+		}
+	} else if strings.HasPrefix(typ, "map[") {
+		if exists {
+			if m, ok := rawVal.(map[string]interface{}); ok && len(m) > 0 {
+				for k, v := range m {
+					rows = append(rows, traverseByType(fmt.Sprintf("%s[%s]", pm.Name, k), v, pm.TypeName)...)
+				}
+			} else {
+				// if the map is empty, add a placeholder
+				rows = append(rows, traverseByType(fmt.Sprintf("%s[name]", pm.Name), map[string]interface{}{}, pm.TypeName)...)
+			}
+		} else {
+			rows = append(rows, traverseByType(fmt.Sprintf("%s[name]", pm.Name), map[string]interface{}{}, pm.TypeName)...)
+		}
+	} else {
+		rows = append(rows, traverseByType(pm.Name, rawVal, pm.TypeName)...)
+	}
+	return rows
+}
+
+func traverseByType(path string, raw interface{}, typeName string) []ParamToRender {
+	var rows []ParamToRender
+	m := map[string]interface{}{}
+	if mm, ok := raw.(map[string]interface{}); ok {
+		m = mm
+	}
+	for _, fm := range typeFields[typeName] {
+		if fm.Name == "" {
+			continue
+		}
+		val, ok := m[fm.Name]
+		rows = append(rows, ParamToRender{
+			Path:        path + "." + fm.Name,
+			Description: fm.Description,
+			Type:        normalizeType(fm.Type),
+			Value:       valueString(val, ok, fm.Type),
+		})
+		childType := deriveTypeName(fm.Type)
+		if _, has := typeFields[childType]; has {
+			childRaw := map[string]interface{}{}
+			if ok {
+				if mm2, ok2 := val.(map[string]interface{}); ok2 {
+					childRaw = mm2
+				}
+			}
+			rows = append(rows, traverseByType(path+"."+fm.Name, childRaw, childType)...)
+		}
+	}
+	return rows
+}
+
+func deriveTypeName(t string) string {
+	if strings.HasPrefix(t, "[]") {
+		return t[2:]
+	}
+	if strings.HasPrefix(t, "*") {
+		return t[1:]
+	}
+	if strings.HasPrefix(t, "map[") {
+		if idx := strings.LastIndex(t, "]"); idx != -1 && idx+1 < len(t) {
+			return t[idx+1:]
+		}
+	}
+	return t
+}
+
+func normalizeType(t string) string {
+	if idx := strings.IndexAny(t, " \t"); idx != -1 {
+		t = t[:idx]
+	}
+
+	if strings.HasSuffix(t, "quantity") {
+		if strings.HasPrefix(t, "*") {
+			return "*string"
+		}
+		return "string"
+	}
+
+	if strings.HasPrefix(t, "*") {
+		base := strings.TrimPrefix(t, "*")
+		if !isPrimitive(base) && !strings.HasPrefix(base, "[]") && !strings.HasPrefix(base, "map[") {
+			return "*object"
+		}
+		return t
+	}
+
+	if !isPrimitive(t) && !strings.HasPrefix(t, "[]") && !strings.HasPrefix(t, "map[") {
+		return "object"
+	}
+
+	return t
+}
+
+func valueString(raw interface{}, exists bool, t string) string {
+	if !exists {
+		switch {
+		case strings.HasPrefix(t, "[]"):
+			return "`[]`"
+		case strings.HasPrefix(t, "map["):
+			return "`{}`"
+		case strings.HasPrefix(t, "*"):
+			return "`null`"
+		case t == "string" || t == "quantity":
+			return "`\"\"`"
+		case t == "int":
+			return "`0`"
+		case t == "bool":
+			return "`false`"
+		default:
+			return "`{}`"
+		}
+	}
+	switch v := raw.(type) {
+	case string:
+		if v == "" {
+			return "`\"\"`"
+		}
+		return fmt.Sprintf("`%s`", v)
+	case bool:
+		return fmt.Sprintf("`%t`", v)
+	case int, int64:
+		return fmt.Sprintf("`%d`", v)
+	case float64:
+		if v == float64(int(v)) {
+			return fmt.Sprintf("`%d`", int(v))
+		}
+		return fmt.Sprintf("`%f`", v)
+	case []interface{}, map[string]interface{}:
+		if b, err := json.Marshal(v); err == nil {
+			return fmt.Sprintf("`%s`", string(b))
+		}
+		return "`{}`"
+	default:
+		return "`{}`"
+	}
 }
 
 func isPrimitive(t string) bool {
-	switch t {
-	case "string", "bool", "boolean", "int", "int32", "int64",
-		"float32", "float64", "number", "integer", "nil",
-		"quantity":
+	base := strings.TrimPrefix(t, "*")
+	switch base {
+	case "string", "int", "bool", "float64":
 		return true
-	default:
-		return false
-	}
-}
-
-/* -------------------------------------------------------------------------- */
-/*  Parameter model                                                           */
-/* -------------------------------------------------------------------------- */
-
-type Parameter struct {
-	Name, Description string
-	Type, DisplayType string
-	Value             interface{}
-	Modifiers         []string
-	Section           string
-	Validate, Readme  bool
-	Schema            bool
-}
-
-func NewParameter(name string) *Parameter {
-	return &Parameter{Name: name, Validate: true, Readme: true, Schema: true}
-}
-
-func (p *Parameter) HasModifier(m string) bool {
-	for _, x := range p.Modifiers {
-		if x == m {
-			return true
-		}
 	}
 	return false
 }
-func (p *Parameter) Extra() bool { return !p.Validate && p.Readme }
-func (p *Parameter) Skip() bool  { return !p.Validate && !p.Readme }
 
-/* -------------------------------------------------------------------------- */
-/*  YAML flatten & type inference                                             */
-/* -------------------------------------------------------------------------- */
-
-func flattenYAML(prefix string, in interface{}, out map[string]interface{}) {
-	switch v := in.(type) {
-	case map[string]interface{}:
-		if len(v) == 0 {
-			if prefix != "" {
-				out[prefix] = v
-			}
-			return
-		}
-		for k, val := range v {
-			key := k
-			if prefix != "" {
-				key = prefix + "." + k
-			}
-			flattenYAML(key, val, out)
-		}
-	case []interface{}:
-		if len(v) == 0 {
-			if prefix != "" {
-				out[prefix] = v
-			}
-			return
-		}
-		for i, val := range v {
-			key := fmt.Sprintf("%s[%d]", prefix, i)
-			flattenYAML(key, val, out)
-		}
-	default:
-		out[prefix] = v
+func markdownTable(rows []ParamToRender) string {
+	data := [][]string{{"Name", "Description", "Type", "Value"}}
+	for _, r := range rows {
+		data = append(data, []string{
+			fmt.Sprintf("`%s`", r.Path),
+			r.Description,
+			fmt.Sprintf("`%s`", r.Type),
+			r.Value,
+		})
 	}
+	widths := make([]int, len(data[0]))
+	for _, row := range data {
+		for i, cell := range row {
+			if len(cell) > widths[i] {
+				widths[i] = len(cell)
+			}
+		}
+	}
+	var sb strings.Builder
+	for i, row := range data {
+		sb.WriteString("|")
+		for j, cell := range row {
+			sb.WriteString(" " + cell + strings.Repeat(" ", widths[j]-len(cell)) + " |")
+		}
+		sb.WriteString("\n")
+		if i == 0 {
+			sb.WriteString("|")
+			for _, w := range widths {
+				sb.WriteString(" " + strings.Repeat("-", w) + " |")
+			}
+			sb.WriteString("\n")
+		}
+	}
+	return sb.String()
 }
 
-func inferType(v interface{}) string {
-	switch v.(type) {
-	case nil:
-		return "nil"
-	case string:
-		return "string"
-	case bool:
-		return "boolean"
-	case int, int64:
-		return "integer"
-	case float64:
-		return "number"
-	case []interface{}:
-		return "array"
-	case map[string]interface{}:
-		return "object"
-	default:
-		return "unknown"
-	}
+func renderSection(sec *Section) string {
+	rows := buildParamsToRender(sec.Parameters)
+	return fmt.Sprintf("### %s\n\n%s\n", sec.Name, markdownTable(rows))
 }
 
-func createValuesObject(path string) ([]*Parameter, error) {
-	raw, err := ioutil.ReadFile(path)
+func UpdateParametersSection(valuesPath, readmePath string) error {
+	vals, err := createValuesObject(valuesPath)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("read values: %w", err)
 	}
-	var node interface{}
-	if err := yaml.Unmarshal(raw, &node); err != nil {
-		return nil, err
-	}
-
-	m := map[string]interface{}{}
-	flattenYAML("", node, m)
-
-	out := make([]*Parameter, 0, len(m))
-	for k, v := range m {
-		p := NewParameter(k)
-		p.Value = v
-		p.Type = inferType(v)
-		out = append(out, p)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out, nil
-}
-
-/* -------------------------------------------------------------------------- */
-/*  Metadata parsing                                                          */
-/* -------------------------------------------------------------------------- */
-
-// parseAnnotation returns (baseType, enumList, rawTypeExpression)
-func parseAnnotation(a string) (string, []string, string) {
-	tok := strings.Fields(strings.TrimSpace(a))
-	if len(tok) == 0 {
-		return "string", nil, "string"
-	}
-	raw := tok[0]
-	base := raw
-
-	switch {
-	case strings.HasPrefix(raw, "[]"):
-		base = "array"
-	case strings.HasPrefix(raw, "map["):
-		base = "object"
-	case raw == "int":
-		base = "integer"
-	}
-
-	var enums []string
-	for _, t := range tok[1:] {
-		if strings.HasPrefix(t, "enum:") {
-			list := strings.Trim(t[len("enum:"):], `"`)
-			for _, e := range strings.Split(list, ",") {
-				enums = append(enums, strings.TrimSpace(e))
-			}
-		}
-	}
-
-	if !isPrimitive(base) && base != "array" && base != "object" {
-		base = "object"
-	}
-	return base, enums, raw
-}
-
-func parseMetadataComments(path string) (*Metadata, error) {
-	f, err := os.Open(path)
+	meta, err := parseMetadataComments(valuesPath)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("parse comments: %w", err)
 	}
-	defer f.Close()
-
-	meta := &Metadata{}
-	reader := bufio.NewReader(f)
-
-	var current *Section
-	descActive := false
-	var resourceParents []string
-	visited := map[string]bool{} // <----- NEW
-
-	reSection := regexp.MustCompile(`^\s*##\s*@section\s+(.+)$`)
-	reParam := regexp.MustCompile(`^\s*##\s*@param\s+([^\s]+)\s+\{([^\}]+)\}\s*(.*)$`)
-	reField := regexp.MustCompile(`^\s*##\s*@field\s+([^\s]+)\s+\{([^\}]+)\}\s*(.*)$`)
-	reFree := regexp.MustCompile(`^\s*##\s?(.*)$`)
-
-	var addParam func(name, ann, desc string, inSection *Section, validate bool)
-	addParam = func(name, ann, desc string, inSection *Section, validate bool) {
-		if strings.HasPrefix(name, "resources/") || strings.HasPrefix(name, "resources.") {
-			trimmed := strings.TrimPrefix(strings.TrimPrefix(name, "resources/"), "resources.")
-
-			targets := make([]string, len(resourceParents))
-			copy(targets, resourceParents)
-			if len(targets) == 0 {
-				targets = []string{"resources"}
-			}
-
-			for _, rp := range targets {
-				full := rp + "." + trimmed
-				if visited[full] {
-					continue
-				}
-				base, enum, raw := parseAnnotation(ann)
-				p := NewParameter(full)
-				p.Type, p.DisplayType, p.Description, p.Validate = base, raw, desc, validate
-				if len(enum) > 0 {
-					p.Modifiers = append(p.Modifiers, "enum:"+strings.Join(enum, ","))
-				}
-				if inSection != nil {
-					p.Section = inSection.Name
-					inSection.Parameters = append(inSection.Parameters, p)
-				}
-				meta.AddParameter(p)
-				visited[full] = true
-			}
-			return
-		}
-
-		if visited[name] {
-			return
-		}
-		visited[name] = true
-
-		base, enum, raw := parseAnnotation(ann)
-		p := NewParameter(name)
-		p.Type, p.DisplayType, p.Description, p.Validate = base, raw, desc, validate
-		if len(enum) > 0 {
-			p.Modifiers = append(p.Modifiers, "enum:"+strings.Join(enum, ","))
-		}
-		if inSection != nil {
-			p.Section = inSection.Name
-			inSection.Parameters = append(inSection.Parameters, p)
-		}
-		meta.AddParameter(p)
-
-		if base == "object" && (raw == "resources" || strings.HasSuffix(raw, "/resources")) {
-			resourceParents = append(resourceParents, name)
-		}
-	}
-
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil && err != io.EOF {
-			return nil, err
-		}
-		trim := strings.TrimRight(line, "\r\n")
-
-		switch {
-		case reSection.MatchString(trim):
-			title := reSection.FindStringSubmatch(trim)[1]
-			current = &Section{Name: title}
-			meta.AddSection(current)
-			descActive = true
-
-		case reParam.MatchString(trim):
-			descActive = false
-			sm := reParam.FindStringSubmatch(trim)
-			addParam(sm[1], sm[2], sm[3], current, true)
-
-		case reField.MatchString(trim):
-			descActive = false
-			sm := reField.FindStringSubmatch(trim)
-			addParam(sm[1], sm[2], sm[3], current, false)
-
-		case current != nil && descActive && reFree.MatchString(trim):
-			txt := reFree.FindStringSubmatch(trim)[1]
-			if strings.TrimSpace(txt) != "" {
-				current.DescriptionLines = append(current.DescriptionLines, txt)
-			}
-		}
-
-		if err == io.EOF {
-			break
-		}
-	}
-	return meta, nil
-}
-
-/* ========================================================================== */
-/*  Alias map (singular → placeholder)                                        */
-/* ========================================================================== */
-
-type aliasMap map[string]string
-
-func buildAliasMap(params []*Parameter) aliasMap {
-	am := aliasMap{}
-	for _, p := range params {
-		raw := strings.TrimPrefix(p.DisplayType, "*")
-
-		switch {
-		case strings.HasPrefix(raw, "map[string]"):
-			t := strings.TrimSpace(strings.TrimPrefix(raw, "map[string]"))
-			t = strings.TrimPrefix(t, "*")
-			if t != "" {
-				am[t] = p.Name + "[name]"
-			}
-
-		case strings.HasPrefix(raw, "[]"):
-			t := strings.TrimPrefix(raw, "[]")
-			t = strings.TrimPrefix(t, "*")
-			if t != "" {
-				am[t] = p.Name + "[]"
-			}
-
-		default:
-			if !isPrimitive(raw) {
-				am[raw] = p.Name
-			}
-		}
-	}
-
-	for typ, ph := range am {
-		if strings.Contains(ph, "/") || strings.Contains(ph, ".") {
-			am[typ] = displayPath(ph, am)
-		}
-	}
-	return am
-}
-
-/* ========================================================================== */
-/*  Path renderer                                                             */
-/* ========================================================================== */
-
-var reArrayIdx = regexp.MustCompile(`$begin:math:display$\\d+$end:math:display$`)
-
-func displayPath(raw string, aliases aliasMap) string {
-	segs := strings.Split(strings.ReplaceAll(raw, "/", "."), ".")
-	if len(segs) == 0 {
-		return raw
-	}
-
-	first := segs[0]
-	out := make([]string, 0, len(segs))
-
-	if ph, ok := aliases[first]; ok {
-		ph = strings.ReplaceAll(ph, "/", ".")
-		out = append(out, ph)
-	} else {
-		out = append(out, first)
-	}
-
-	out = append(out, segs[1:]...)
-
-	return reArrayIdx.ReplaceAllString(strings.Join(out, "."), "[]")
-}
-
-/* ========================================================================== */
-/*  README data structures                                                    */
-/* ========================================================================== */
-
-type Section struct {
-	Name             string
-	DescriptionLines []string
-	Parameters       []*Parameter
-}
-
-// only first non-empty description line
-func (s *Section) Description() string {
-	for _, l := range s.DescriptionLines {
-		if strings.TrimSpace(l) != "" {
-			return l
-		}
-	}
-	return ""
-}
-
-type Metadata struct {
-	Sections   []*Section
-	Parameters []*Parameter
-}
-
-func (m *Metadata) AddSection(sec *Section)   { m.Sections = append(m.Sections, sec) }
-func (m *Metadata) AddParameter(p *Parameter) { m.Parameters = append(m.Parameters, p) }
-
-/* ========================================================================== */
-/*  Key-consistency validator                                                 */
-/* ========================================================================== */
-
-func checkKeys(realFlat map[string]interface{}, meta []*Parameter) error {
-	realSet := map[string]struct{}{}
-	for k := range realFlat {
-		realSet[k] = struct{}{}
-	}
-	skip := map[string]struct{}{}
-	for _, p := range meta {
-		if p.Type == "object" || p.Type == "array" {
-			skip[p.Name] = struct{}{}
-			continue
-		}
-		for rk := range realSet {
-			if rk != p.Name && (strings.HasPrefix(rk, p.Name+".") || strings.HasPrefix(rk, p.Name+"[")) {
-				skip[p.Name] = struct{}{}
-				break
-			}
-		}
-	}
-	isSkipped := func(path string) bool {
-		for pref := range skip {
-			if path == pref || strings.HasPrefix(path, pref+".") || strings.HasPrefix(path, pref+"[") {
-				return true
-			}
-		}
-		return false
-	}
-	metaSet := map[string]struct{}{}
-	for _, p := range meta {
-		if p.Validate {
-			metaSet[p.Name] = struct{}{}
-		}
-	}
-
-	var missing, orphan []string
-	for rk := range realSet {
-		if !isSkipped(rk) {
-			if _, ok := metaSet[rk]; !ok {
-				missing = append(missing, rk)
-			}
-		}
-	}
-	for mk := range metaSet {
-		if _, ok := realSet[mk]; !ok && !isSkipped(mk) {
-			orphan = append(orphan, mk)
-		}
-	}
-	sort.Strings(missing)
-	sort.Strings(orphan)
-	if len(missing)+len(orphan) == 0 {
-		return nil
-	}
+	combine(vals)
 
 	var sb strings.Builder
-	for _, k := range missing {
-		sb.WriteString("missing metadata: " + k + "\n")
+	for _, s := range meta.Sections {
+		sb.WriteString(renderSection(s))
+		sb.WriteString("\n")
 	}
-	for _, k := range orphan {
-		sb.WriteString("orphan metadata: " + k + "\n")
-	}
-	return errors.New(sb.String())
-}
+	newContent := sb.String()
 
-/* ========================================================================== */
-/*  Markdown table renderer                                                   */
-/* ========================================================================== */
-
-func tidyType(raw, base string) string {
-	t := strings.TrimPrefix(raw, "*")
-	switch {
-	case raw == "":
-		return base
-	case strings.HasPrefix(raw, "[]"):
-		return raw
-	case strings.HasPrefix(raw, "map["):
-		return raw
-	case strings.HasPrefix(raw, "*") && isPrimitive(t):
-		return raw
-	case isPrimitive(raw):
-		return raw
-	default:
-		return base // collapse structs to object
-	}
-}
-
-func markdownTable(params []*Parameter, aliases aliasMap) string {
-	rows := [][]string{{"Name", "Description", "Type", "Value"}}
-	for _, p := range params {
-		name := fmt.Sprintf("`%s`", displayPath(p.Name, aliases))
-		typ := fmt.Sprintf("`%s`", tidyType(p.DisplayType, p.Type))
-		val := ""
-		if !p.Extra() {
-			switch vv := p.Value.(type) {
-			case string:
-				val = fmt.Sprintf("`%s`", vv)
-			default:
-				b, _ := json.Marshal(vv)
-				val = fmt.Sprintf("`%s`", string(b))
-			}
-		}
-		rows = append(rows, []string{name, p.Description, typ, val})
-	}
-	w := make([]int, len(rows[0]))
-	for _, r := range rows {
-		for i, c := range r {
-			if l := len(c); l > w[i] {
-				w[i] = l
-			}
-		}
-	}
-	var b strings.Builder
-	for i, r := range rows {
-		b.WriteString("|")
-		for j, c := range r {
-			b.WriteString(" " + c + strings.Repeat(" ", w[j]-len(c)) + " |")
-		}
-		b.WriteString("\n")
-		if i == 0 {
-			b.WriteString("|")
-			for _, ww := range w {
-				b.WriteString(" " + strings.Repeat("-", ww) + " |")
-			}
-			b.WriteString("\n")
-		}
-	}
-	return b.String()
-}
-
-/* ========================================================================== */
-/*  README render helpers                                                     */
-/* ========================================================================== */
-
-func renderSection(sec *Section, h string, aliases aliasMap) string {
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("%s %s\n\n", h, sec.Name))
-	if d := sec.Description(); d != "" {
-		b.WriteString(d + "\n\n")
-	}
-	if len(sec.Parameters) > 0 {
-		b.WriteString(markdownTable(sec.Parameters, aliases))
-	}
-	return b.String()
-}
-
-func renderReadmeTable(secs []*Section, h string, aliases aliasMap) string {
-	var b strings.Builder
-	for _, s := range secs {
-		b.WriteString("\n" + renderSection(s, h, aliases))
-	}
-	return b.String()
-}
-
-func insertReadmeTable(readmePath string, sections []*Section, cfg *Config, aliases aliasMap) error {
-	raw, err := ioutil.ReadFile(readmePath)
+	contentBytes, err := os.ReadFile(readmePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("read README: %w", err)
 	}
-	lines := strings.Split(string(raw), "\n")
-	start := -1
-	hPrefix := "##"
-	reStart := regexp.MustCompile(fmt.Sprintf(`^(##+) %s`, cfg.Regexp.ParamsSectionTitle))
+	lines := strings.Split(string(contentBytes), "\n")
+	start, end := -1, len(lines)
+	re := regexp.MustCompile(`^(##+) Parameters`)
+	level := ""
 	for i, l := range lines {
-		if m := reStart.FindStringSubmatch(l); m != nil {
+		if m := re.FindStringSubmatch(l); m != nil {
 			start = i + 1
-			hPrefix = m[1] + "#"
+			level = m[1]
 			break
 		}
 	}
 	if start == -1 {
-		return errors.New("Parameters section not found")
+		return fmt.Errorf("Parameters section not found")
 	}
-	end := len(lines)
-	sameLevel := regexp.MustCompile(fmt.Sprintf(`^%s\s`, strings.Repeat("#", len(hPrefix)-1)))
+	sameLevel := regexp.MustCompile("^" + level + "[^#]")
 	for i := start; i < len(lines); i++ {
 		if sameLevel.MatchString(lines[i]) {
 			end = i
 			break
 		}
 	}
-
-	newTable := renderReadmeTable(sections, hPrefix, aliases)
 	newLines := append([]string{}, lines[:start]...)
-	newLines = append(newLines, strings.Split(newTable, "\n")...)
+	newLines = append(newLines, strings.Split(newContent, "\n")...)
 	newLines = append(newLines, lines[end:]...)
-	return ioutil.WriteFile(readmePath, []byte(strings.Join(newLines, "\n")), 0644)
-}
-
-/* ========================================================================== */
-/*  Merge & modifiers                                                         */
-/* ========================================================================== */
-
-func combine(values, meta []*Parameter) {
-	for _, p := range meta {
-		if p.Extra() {
-			continue
-		}
-		for _, v := range values {
-			if v.Name == p.Name && p.Value == nil {
-				p.Value = v.Value
-				break
-			}
-		}
-	}
-}
-
-func applyModifiers(p *Parameter, cfg *Config) {
-	if len(p.Modifiers) == 0 {
-		return
-	}
-	nullableLast := p.HasModifier(cfg.Modifiers.Nullable) && p.Modifiers[len(p.Modifiers)-1] == cfg.Modifiers.Nullable
-	for _, m := range p.Modifiers {
-		switch m {
-		case cfg.Modifiers.Array:
-			p.Type = "array"
-			if !nullableLast {
-				p.Value = []interface{}{}
-			}
-		case cfg.Modifiers.Object:
-			p.Type = "object"
-			if !nullableLast {
-				p.Value = map[string]interface{}{}
-			}
-		case cfg.Modifiers.String:
-			p.Type = "string"
-			if !nullableLast {
-				p.Value = ""
-			}
-		case cfg.Modifiers.Nullable:
-			if p.Value == nil {
-				p.Value = "nil"
-			}
-		default:
-			if strings.HasPrefix(m, cfg.Modifiers.Default+":") {
-				p.Value = strings.TrimSpace(strings.TrimPrefix(m, cfg.Modifiers.Default+":"))
-			}
-		}
-	}
-}
-func buildParamsToRender(ps []*Parameter, cfg *Config) []*Parameter {
-	out := []*Parameter{}
-	for _, p := range ps {
-		if p.Skip() {
-			continue
-		}
-		applyModifiers(p, cfg)
-		out = append(out, p)
-	}
-	return out
-}
-
-/* ========================================================================== */
-/*  Public entry point                                                        */
-/* ========================================================================== */
-
-// UpdateParametersSection parses values.yaml and rewrites the Parameters
-// section in README.md with a fresh, clean table.
-func UpdateParametersSection(valuesPath, readmePath string) error {
-	cfg := defaultConfig()
-
-	vals, err := createValuesObject(valuesPath)
-	if err != nil {
-		return err
-	}
-
-	flat := map[string]interface{}{}
-	for _, p := range vals {
-		flat[p.Name] = p.Value
-	}
-
-	meta, err := parseMetadataComments(valuesPath)
-	if err != nil {
-		return err
-	}
-	if err := checkKeys(flat, meta.Parameters); err != nil {
-		return err
-	}
-
-	aliases := buildAliasMap(meta.Parameters)
-	combine(vals, meta.Parameters)
-	for _, s := range meta.Sections {
-		s.Parameters = buildParamsToRender(s.Parameters, cfg)
-	}
-
-	return insertReadmeTable(readmePath, meta.Sections, cfg, aliases)
+	return os.WriteFile(readmePath, []byte(strings.Join(newLines, "\n")), 0644)
 }
