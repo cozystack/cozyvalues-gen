@@ -125,12 +125,14 @@ func combine(vals map[string]interface{}) { valuesMap = vals }
 func buildParamsToRender(params []ParamMeta) []ParamToRender {
 	var out []ParamToRender
 	for _, pm := range params {
-		rawVal, exists := valuesMap[pm.Name]
 		typDisplay := normalizeType(pm.TypeOriginal)
 
-		// if the type is not primitive, always show placeholder
-		useVal := exists && (isPrimitive(pm.TypeOriginal) || strings.HasPrefix(pm.TypeOriginal, "*"))
-		val := valueString(rawVal, useVal, pm.TypeOriginal)
+		val := defaultValueForType(pm.TypeOriginal)
+
+		if isPrimitive(pm.TypeOriginal) || strings.HasPrefix(pm.TypeOriginal, "*") || strings.Contains(pm.TypeOriginal, "quantity") || (strings.HasPrefix(pm.TypeOriginal, "[]") && isPrimitive(pm.TypeName)) {
+			rawVal, exists := valuesMap[pm.Name]
+			val = valueString(rawVal, exists, pm.TypeOriginal)
+		}
 
 		out = append(out, ParamToRender{
 			Path:        pm.Name,
@@ -138,7 +140,7 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 			Type:        typDisplay,
 			Value:       val,
 		})
-		out = append(out, traverseParam(pm, rawVal, exists)...)
+		out = append(out, traverseParam(pm, valuesMap[pm.Name], true)...)
 	}
 	return out
 }
@@ -148,18 +150,20 @@ func traverseParam(pm ParamMeta, rawVal interface{}, exists bool) []ParamToRende
 	typ := pm.TypeOriginal
 	if strings.HasPrefix(typ, "[]") {
 		etype := pm.TypeName
-		items := []interface{}{}
-		if exists {
-			if s, ok := rawVal.([]interface{}); ok {
-				items = s
+		if !isPrimitive(etype) {
+			items := []interface{}{}
+			if exists {
+				if s, ok := rawVal.([]interface{}); ok {
+					items = s
+				}
 			}
-		}
-		if len(items) > 0 {
-			for i, it := range items {
-				rows = append(rows, traverseByType(fmt.Sprintf("%s[%d]", pm.Name, i), it, etype)...)
+			if len(items) > 0 {
+				for i, it := range items {
+					rows = append(rows, traverseByType(fmt.Sprintf("%s[%d]", pm.Name, i), it, etype)...)
+				}
+			} else {
+				rows = append(rows, traverseByType(fmt.Sprintf("%s[i]", pm.Name), map[string]interface{}{}, pm.TypeName)...)
 			}
-		} else {
-			rows = append(rows, traverseByType(fmt.Sprintf("%s[i]", pm.Name), map[string]interface{}{}, pm.TypeName)...)
 		}
 	} else if strings.HasPrefix(typ, "map[") {
 		if exists {
@@ -168,7 +172,6 @@ func traverseParam(pm ParamMeta, rawVal interface{}, exists bool) []ParamToRende
 					rows = append(rows, traverseByType(fmt.Sprintf("%s[%s]", pm.Name, k), v, pm.TypeName)...)
 				}
 			} else {
-				// if the map is empty, add a placeholder
 				rows = append(rows, traverseByType(fmt.Sprintf("%s[name]", pm.Name), map[string]interface{}{}, pm.TypeName)...)
 			}
 		} else {
@@ -191,12 +194,23 @@ func traverseByType(path string, raw interface{}, typeName string) []ParamToRend
 			continue
 		}
 		val, ok := m[fm.Name]
+
+		baseType := deriveTypeName(fm.Type)
+		isArrayOfPrimitives := strings.HasPrefix(fm.Type, "[]") && isPrimitive(baseType)
+		isDirectPrimitive := isPrimitive(baseType) || strings.Contains(baseType, "quantity")
+
+		value := defaultValueForType(fm.Type)
+		if isDirectPrimitive || isArrayOfPrimitives {
+			value = valueString(val, ok, fm.Type)
+		}
+
 		rows = append(rows, ParamToRender{
 			Path:        path + "." + fm.Name,
 			Description: fm.Description,
 			Type:        normalizeType(fm.Type),
-			Value:       valueString(val, ok, fm.Type),
+			Value:       value,
 		})
+
 		childType := deriveTypeName(fm.Type)
 		if _, has := typeFields[childType]; has {
 			childRaw := map[string]interface{}{}
@@ -254,24 +268,10 @@ func normalizeType(t string) string {
 }
 
 func valueString(raw interface{}, exists bool, t string) string {
-	if !exists {
-		switch {
-		case strings.HasPrefix(t, "[]"):
-			return "`[]`"
-		case strings.HasPrefix(t, "map["):
-			return "`{}`"
-		case strings.HasPrefix(t, "*"):
-			return "`null`"
-		case t == "string" || t == "quantity":
-			return "`\"\"`"
-		case t == "int":
-			return "`0`"
-		case t == "bool":
-			return "`false`"
-		default:
-			return "`{}`"
-		}
+	if !exists || raw == nil {
+		return defaultValueForType(t)
 	}
+
 	switch v := raw.(type) {
 	case string:
 		if v == "" {
@@ -287,7 +287,21 @@ func valueString(raw interface{}, exists bool, t string) string {
 			return fmt.Sprintf("`%d`", int(v))
 		}
 		return fmt.Sprintf("`%f`", v)
-	case []interface{}, map[string]interface{}:
+	case []interface{}:
+		if len(v) == 0 {
+			return "`[]`"
+		}
+		parts := []string{}
+		for _, item := range v {
+			switch vv := item.(type) {
+			case string:
+				parts = append(parts, vv)
+			default:
+				parts = append(parts, fmt.Sprintf("%v", vv))
+			}
+		}
+		return fmt.Sprintf("`[%s]`", strings.Join(parts, ", "))
+	case map[string]interface{}:
 		if b, err := json.Marshal(v); err == nil {
 			return fmt.Sprintf("`%s`", string(b))
 		}
@@ -347,6 +361,58 @@ func renderSection(sec *Section) string {
 	return fmt.Sprintf("### %s\n\n%s\n", sec.Name, markdownTable(rows))
 }
 
+func validateValues(params []ParamMeta, typeFields map[string][]FieldMeta, values map[string]interface{}) error {
+	paramMap := make(map[string]ParamMeta)
+	for _, p := range params {
+		paramMap[p.Name] = p
+	}
+
+	var check func(path string, val interface{}, typeName string) error
+	check = func(path string, val interface{}, typeName string) error {
+		if _, has := typeFields[typeName]; !has && !isPrimitive(typeName) && !strings.Contains(typeName, "quantity") &&
+			!strings.HasPrefix(typeName, "[]") && !strings.HasPrefix(typeName, "map[") {
+			return fmt.Errorf("type '%s' for field '%s' is not defined in schema", typeName, path)
+		}
+
+		fields, has := typeFields[typeName]
+		if !has {
+			return nil
+		}
+		valMap, ok := val.(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		allowed := make(map[string]FieldMeta)
+		for _, f := range fields {
+			allowed[f.Name] = f
+		}
+		for k, v := range valMap {
+			fm, exists := allowed[k]
+			if !exists {
+				return fmt.Errorf("field '%s.%s' is not defined in schema", path, k)
+			}
+			childType := deriveTypeName(fm.Type)
+			if err := check(path+"."+k, v, childType); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	for k, v := range values {
+		pm, exists := paramMap[k]
+		if !exists {
+			return fmt.Errorf("parameter '%s' is not defined in schema", k)
+		}
+		childType := deriveTypeName(pm.TypeOriginal)
+		if err := check(k, v, childType); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func UpdateParametersSection(valuesPath, readmePath string) error {
 	vals, err := createValuesObject(valuesPath)
 	if err != nil {
@@ -357,6 +423,14 @@ func UpdateParametersSection(valuesPath, readmePath string) error {
 		return fmt.Errorf("parse comments: %w", err)
 	}
 	combine(vals)
+
+	params := []ParamMeta{}
+	for _, s := range meta.Sections {
+		params = append(params, s.Parameters...)
+	}
+	if err := validateValues(params, typeFields, vals); err != nil {
+		return fmt.Errorf("validate values: %w", err)
+	}
 
 	var sb strings.Builder
 	for _, s := range meta.Sections {
@@ -394,4 +468,27 @@ func UpdateParametersSection(valuesPath, readmePath string) error {
 	newLines = append(newLines, strings.Split(newContent, "\n")...)
 	newLines = append(newLines, lines[end:]...)
 	return os.WriteFile(readmePath, []byte(strings.Join(newLines, "\n")), 0644)
+}
+
+func defaultValueForType(t string) string {
+	if strings.HasPrefix(t, "*") {
+		return "`null`"
+	}
+
+	base := strings.TrimPrefix(t, "*")
+
+	switch {
+	case strings.HasPrefix(base, "[]"):
+		return "`[]`"
+	case strings.HasPrefix(base, "map["):
+		return "`{}`"
+	case base == "string" || base == "quantity":
+		return "`\"\"`"
+	case base == "int":
+		return "`0`"
+	case base == "bool":
+		return "`false`"
+	default:
+		return "`{}`"
+	}
 }

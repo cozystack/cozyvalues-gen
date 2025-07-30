@@ -114,7 +114,7 @@ databases:
 	if !strings.Contains(table, "`databases`") || !strings.Contains(table, "`{}`") {
 		t.Errorf("expected databases map with `{}`, got:\n%s", table)
 	}
-	if !strings.Contains(table, "`databases[myapp].roles.admin`") || !strings.Contains(table, "`[\"user1\",\"user2\"]`") {
+	if !strings.Contains(table, "`databases[myapp].roles.admin`") || !strings.Contains(table, "`[user1, user2]`") {
 		t.Errorf("expected nested roles.admin array with users, got:\n%s", table)
 	}
 }
@@ -150,5 +150,227 @@ func TestStringEnumStripped(t *testing.T) {
 func TestEmptyStringsRenderedAsQuoted(t *testing.T) {
 	if valueString("", true, "string") != "`\"\"`" {
 		t.Errorf("expected empty string to be rendered as `\"\"`")
+	}
+}
+
+func TestIntegerLists(t *testing.T) {
+	yamlContent := `
+## @param intList {[]int} A required list of integers, empty.
+intList:
+
+## @param intListSingle {[]int} A list of integers with one value.
+intListSingle:
+  - 80
+
+## @param intListMultiple {[]int} A list of integers with one value.
+intListMultiple:
+  - 80
+  - 8080
+
+## @param intListNullable {[]*int} A nullable list of integers, empty.
+intListNullable:
+
+## @param intListNullableSingle {[]*int} A nullable list of integers with one value.
+intListNullableSingle:
+  - 80
+
+## @param intListNullableMultiple {[]*int} A nullable list of integers with multiple values.
+intListNullableMultiple:
+  - 80
+  - 8080
+`
+	table := renderTableFromValues(t, yamlContent)
+	if !strings.Contains(table, "`intList`") || !strings.Contains(table, "`[]`") {
+		t.Errorf("expected empty intList as [] got:\n%s", table)
+	}
+	if !strings.Contains(table, "`intListSingle`") || !strings.Contains(table, "`[80]`") {
+		t.Errorf("expected intListSingle with 80 got:\n%s", table)
+	}
+	if !strings.Contains(table, "`intListMultiple`") || !strings.Contains(table, "`[80, 8080]`") {
+		t.Errorf("expected intListMultiple with 2 values got:\n%s", table)
+	}
+	if !strings.Contains(table, "`intListNullableMultiple`") || !strings.Contains(table, "`[80, 8080]`") {
+		t.Errorf("expected intListNullableMultiple with 2 values got:\n%s", table)
+	}
+}
+
+func TestStringLists(t *testing.T) {
+	yamlContent := `
+## @param stringList {[]string} A required list of strings, empty.
+stringList:
+
+## @param stringListSingle {[]string} A required list of strings with one value.
+stringListSingle:
+  - "user1"
+
+## @param stringListMultiple {[]string} A required list of strings with multiple values.
+stringListMultiple:
+  - "user1"
+  - "user2"
+
+## @param stringListNullable {[]*string} A nullable list of strings, empty.
+stringListNullable:
+
+## @param stringListNullableSingle {[]*string} A nullable list of strings with one value.
+stringListNullableSingle:
+  - "user1"
+
+## @param stringListNullableMultiple {[]*string} A nullable list of strings with multiple values.
+stringListNullableMultiple:
+  - "user1"
+  - "user2"
+`
+	table := renderTableFromValues(t, yamlContent)
+	if !strings.Contains(table, "`stringListMultiple`") || !strings.Contains(table, "`[user1, user2]`") {
+		t.Errorf("expected stringListMultiple with 2 values got:\n%s", table)
+	}
+	if !strings.Contains(table, "`stringListNullableSingle`") || !strings.Contains(table, "`[user1]`") {
+		t.Errorf("expected stringListNullableSingle with 1 value got:\n%s", table)
+	}
+}
+
+func TestBasicTypes(t *testing.T) {
+	yamlContent := `
+## @param testInt {int} Integer variable
+testInt:
+## @param testIntDefault {int} Integer variable with default value
+testIntDefault: 10
+## @param testBoolTrue {bool} Boolean variable, defaults to true
+testBoolTrue: true
+## @param testStringDefault {string} String variable with default value
+testStringDefault: "hello"
+`
+	table := renderTableFromValues(t, yamlContent)
+	if !strings.Contains(table, "`testInt`") || !strings.Contains(table, "`0`") {
+		t.Errorf("expected testInt as 0 got:\n%s", table)
+	}
+	if !strings.Contains(table, "`testIntDefault`") || !strings.Contains(table, "`10`") {
+		t.Errorf("expected testIntDefault as 10 got:\n%s", table)
+	}
+	if !strings.Contains(table, "`testBoolTrue`") || !strings.Contains(table, "`true`") {
+		t.Errorf("expected testBoolTrue as true got:\n%s", table)
+	}
+	if !strings.Contains(table, "`testStringDefault`") || !strings.Contains(table, "`hello`") {
+		t.Errorf("expected testStringDefault as hello got:\n%s", table)
+	}
+}
+
+func TestQuantities(t *testing.T) {
+	yamlContent := `
+## @param quantityDefaultCpuShare {quantity} A quantity default with vCPU share.
+quantityDefaultCpuShare: "100m"
+## @param quantityNullableDefaultRam {*quantity} A nullable quantity with a default RAM size.
+quantityNullableDefaultRam: "500MiB"
+`
+	table := renderTableFromValues(t, yamlContent)
+	if !strings.Contains(table, "`quantityDefaultCpuShare`") || !strings.Contains(table, "`100m`") {
+		t.Errorf("expected quantityDefaultCpuShare as 100m got:\n%s", table)
+	}
+	if !strings.Contains(table, "`quantityNullableDefaultRam`") || !strings.Contains(table, "`500MiB`") {
+		t.Errorf("expected quantityNullableDefaultRam as 500MiB got:\n%s", table)
+	}
+}
+
+func TestComplexObjectFields(t *testing.T) {
+	yamlContent := `
+## @param foo {foo} Configuration for foo
+## @field foo.db {fooDB} Field with custom type declared locally
+## @field fooDB.volume {string} Sub-field declared with path relative to custom type
+foo:
+  db:
+    volume: "10Gi"
+`
+	table := renderTableFromValues(t, yamlContent)
+	if !strings.Contains(table, "`foo.db.volume`") || !strings.Contains(table, "`10Gi`") {
+		t.Errorf("expected foo.db.volume as 10Gi got:\n%s", table)
+	}
+}
+
+func TestTemplateVar(t *testing.T) {
+	yamlContent := `
+## @param test {test} Test variable
+test:
+`
+	table := renderTableFromValues(t, yamlContent)
+	if !strings.Contains(table, "`test`") || !strings.Contains(table, "`{}`") {
+		t.Errorf("expected test as {} got:\n%s", table)
+	}
+}
+
+func TestNullableDefaultsRenderedAsNull(t *testing.T) {
+	yamlContent := `
+## @param testIntNullable {*int} Integer variable, nullable
+testIntNullable:
+
+## @param testBoolNullable {*bool} Boolean variable, nullable
+testBoolNullable:
+
+## @param testStringNullable {*string} String variable, nullable
+testStringNullable:
+
+## @param quantityNullable {*quantity} A nullable quantity value.
+quantityNullable:
+
+## @param intListNullable {*[]int} A nullable list of integers, empty.
+intListNullable:
+
+## @param stringListNullable {*[]string} A nullable list of strings, empty.
+stringListNullable:
+`
+	table := renderTableFromValues(t, yamlContent)
+	expected := []string{
+		"`testIntNullable`", "`null`",
+		"`testBoolNullable`", "`null`",
+		"`testStringNullable`", "`null`",
+		"`quantityNullable`", "`null`",
+		"`intListNullable`", "`null`",
+		"`stringListNullable`", "`null`",
+	}
+	for i := 0; i < len(expected); i += 2 {
+		if !strings.Contains(table, expected[i]) || !strings.Contains(table, expected[i+1]) {
+			t.Errorf("expected %s to be rendered as %s, got:\n%s", expected[i], expected[i+1], table)
+		}
+	}
+}
+
+func TestValidationUnknownField(t *testing.T) {
+	yamlContent := `
+## @param foo {foo} Foo object
+## @field foo.db {fooDB} Database
+## @field fooDB.size {string} Size
+foo:
+  db:
+    sie: 10Gi
+`
+	path := writeTempFile(t, yamlContent)
+	defer os.Remove(path)
+	vals, _ := createValuesObject(path)
+	meta, _ := parseMetadataComments(path)
+	var params []ParamMeta
+	for _, s := range meta.Sections {
+		params = append(params, s.Parameters...)
+	}
+	err := validateValues(params, typeFields, vals)
+	if err == nil || !strings.Contains(err.Error(), "foo.db.sie") {
+		t.Errorf("expected error about unknown field foo.db.sie, got: %v", err)
+	}
+}
+
+func TestValidationUnknownType(t *testing.T) {
+	yamlContent := `
+## @param test {test} Test variable
+test:
+`
+	path := writeTempFile(t, yamlContent)
+	defer os.Remove(path)
+	vals, _ := createValuesObject(path)
+	meta, _ := parseMetadataComments(path)
+	var params []ParamMeta
+	for _, s := range meta.Sections {
+		params = append(params, s.Parameters...)
+	}
+	err := validateValues(params, typeFields, vals)
+	if err == nil || !strings.Contains(err.Error(), "type 'test'") {
+		t.Errorf("expected error about unknown type 'test', got: %v", err)
 	}
 }
