@@ -155,6 +155,9 @@ func parseMetadataComments(path string) (*Meta, error) {
 }
 
 func resolveTypeName(typ string) string {
+	if idx := strings.IndexAny(typ, " \t"); idx != -1 {
+		typ = typ[:idx]
+	}
 	if strings.HasPrefix(typ, "[]") {
 		return typ[2:]
 	}
@@ -277,6 +280,9 @@ func traverseByType(path string, raw interface{}, typeName string) []ParamToRend
 }
 
 func deriveTypeName(t string) string {
+	if idx := strings.IndexAny(t, " \t"); idx != -1 {
+		t = t[:idx]
+	}
 	if strings.HasPrefix(t, "[]") {
 		return t[2:]
 	}

@@ -264,41 +264,44 @@ func camel(in string) string {
 // resolve converts a raw type expression (possibly pkg.Type)
 // into the identifier used in generated code and adds imports as needed.
 func (g *gen) resolve(raw string) string {
-	if isPrimitive(raw) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "string"
+	}
+	if isPrimitive(raw) || raw == "any" {
 		return raw
 	}
-	if strings.Contains(raw, ".") { // external
-		switch raw {
-		case "quantity":
+	if strings.HasPrefix(raw, "map[") || strings.HasPrefix(raw, "[]") {
+		return raw
+	}
+	if strings.Contains(raw, ".") {
+		if raw == "quantity" {
 			return "string"
-		default:
-			if idx := strings.LastIndex(raw, "."); idx != -1 {
-				g.addImp(raw[:idx])
-				return raw[idx+1:]
-			}
+		}
+		if idx := strings.LastIndex(raw, "."); idx != -1 {
+			g.addImp(raw[:idx])
+			return raw[idx+1:]
 		}
 	}
-	return camel(raw) // same-package struct
+	return camel(raw)
 }
 
-// goType resolves a node’s type expression into a valid Go type.
+// goType resolvea a node’s type expression into a valid Go type.
 func (g *gen) goType(n *node) string {
 	raw := strings.TrimSpace(n.typeExpr)
-	switch {
-	case raw == "":
+	if raw == "" {
 		if len(n.child) > 0 {
 			return camel(n.name)
 		}
 		return "string"
-	case strings.HasPrefix(raw, "*"):
+	}
+	if strings.HasPrefix(raw, "*") {
 		return "*" + g.resolve(strings.TrimPrefix(raw, "*"))
-	case reSlice.MatchString(raw):
-		return "[]" + g.resolve(reSlice.FindStringSubmatch(raw)[1])
-	case reMap.MatchString(raw):
-		return "map[string]" + g.resolve(reMap.FindStringSubmatch(raw)[1])
-	default:
+	}
+	if reSlice.MatchString(raw) || reMap.MatchString(raw) {
 		return g.resolve(raw)
 	}
+	return g.resolve(raw)
 }
 
 // quoteEnums formats enum values for kubebuilder validation markers.
@@ -392,7 +395,9 @@ func (g *gen) emitField(c *node) {
 /* -------------------------------------------------------------------------- */
 
 // generate returns a formatted Go source file that implements all structs.
-func (g *gen) generate(root *node) ([]byte, error) {
+// generate returns a formatted Go source file that implements all structs.
+// If formatting fails, returns unformatted code (and caller can write it as-is).
+func (g *gen) generate(root *node) ([]byte, []byte, error) {
 	g.buf.WriteString("// +kubebuilder:object:generate=true\n")
 	g.buf.WriteString("// +kubebuilder:object:root=true\n")
 	g.buf.WriteString("// +groupName=values.helm.io\n\n")
@@ -403,6 +408,7 @@ func (g *gen) generate(root *node) ([]byte, error) {
 	g.writeStruct(root)
 
 	// prepend imports if any were collected.
+	var src []byte
 	if len(g.imp) > 0 {
 		var imp bytes.Buffer
 		imp.WriteString("import (\n")
@@ -412,11 +418,17 @@ func (g *gen) generate(root *node) ([]byte, error) {
 		imp.WriteString(")\n\n")
 
 		head := "package " + g.pkg + "\n\n"
-		src := g.buf.Bytes()
+		src = g.buf.Bytes()
 		src = []byte(strings.Replace(string(src), head, head+imp.String(), 1))
-		return format.Source(src)
+	} else {
+		src = g.buf.Bytes()
 	}
-	return format.Source(g.buf.Bytes())
+
+	formatted, err := format.Source(src)
+	if err != nil {
+		return nil, src, fmt.Errorf("formatting failed: %w", err)
+	}
+	return formatted, src, nil
 }
 
 /* -------------------------------------------------------------------------- */
@@ -565,12 +577,14 @@ replace k8s.io/apimachinery => ./k8s.io/apimachinery
 
 	// 3. generate Go code.
 	g := &gen{pkg: module}
-	code, err := g.generate(root)
+	formatted, raw, err := g.generate(root)
+	goFilePath = filepath.Join(pkgDir, "values_generated.go")
 	if err != nil {
-		return "", "", err
+		_ = os.WriteFile(goFilePath, raw, 0o644)
+		return tmpdir, goFilePath, fmt.Errorf("write generated (unformatted): %w", err)
 	}
 	goFilePath = filepath.Join(pkgDir, "values_generated.go")
-	if err := os.WriteFile(goFilePath, code, 0o644); err != nil {
+	if err := os.WriteFile(goFilePath, formatted, 0o644); err != nil {
 		return "", "", err
 	}
 
