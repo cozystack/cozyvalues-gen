@@ -426,15 +426,17 @@ func validateValues(params []ParamMeta, typeFields map[string][]FieldMeta, value
 
 	var check func(path string, val interface{}, typeName string) error
 	check = func(path string, val interface{}, typeName string) error {
-		if _, has := typeFields[typeName]; !has && !isPrimitive(typeName) && !strings.Contains(typeName, "quantity") &&
-			!strings.HasPrefix(typeName, "[]") && !strings.HasPrefix(typeName, "map[") {
-			return fmt.Errorf("type '%s' for field '%s' is not defined in schema", typeName, path)
-		}
-
 		fields, has := typeFields[typeName]
 		if !has {
+			if !isPrimitive(typeName) &&
+				!strings.Contains(typeName, "quantity") &&
+				!strings.HasPrefix(typeName, "[]") &&
+				!strings.HasPrefix(typeName, "map[") {
+				return nil
+			}
 			return nil
 		}
+
 		valMap, ok := val.(map[string]interface{})
 		if !ok {
 			return nil

@@ -356,25 +356,6 @@ foo:
 	}
 }
 
-func TestValidationUnknownType(t *testing.T) {
-	yamlContent := `
-## @param test {test} Test variable
-test:
-`
-	path := writeTempFile(t, yamlContent)
-	defer os.Remove(path)
-	vals, _ := createValuesObject(path)
-	meta, _ := parseMetadataComments(path)
-	var params []ParamMeta
-	for _, s := range meta.Sections {
-		params = append(params, s.Parameters...)
-	}
-	err := validateValues(params, typeFields, vals)
-	if err == nil || !strings.Contains(err.Error(), "type 'test'") {
-		t.Errorf("expected error about unknown type 'test', got: %v", err)
-	}
-}
-
 func TestNestedFieldAnnotations(t *testing.T) {
 	yamlContent := `
 ## @section Alerta configuration

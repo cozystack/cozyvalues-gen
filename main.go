@@ -351,7 +351,9 @@ type quantity string
 		return
 	}
 
-	if len(n.child) == 0 { // leaf with explicit type
+	if len(n.child) == 0 {
+		//g.buf.WriteString(fmt.Sprintf("// +kubebuilder:validation:Type=object\n"))
+		g.buf.WriteString(fmt.Sprintf("type %s struct {}\n\n", camel(n.name)))
 		return
 	}
 
@@ -726,6 +728,11 @@ func populateDefaults(n *node, y interface{}, aliases map[string]*node) {
 			if !ok {
 				continue
 			}
+
+			if yval == nil {
+				continue
+			}
+
 			switch yval.(type) {
 			case string, int, int64, float64, bool:
 				if child.defaultVal == "" {
