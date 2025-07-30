@@ -176,7 +176,7 @@ func build(rows []raw) *node {
 	isPrim := func(s string) bool { return isPrimitive(strings.TrimPrefix(s, "*")) }
 
 	addImplicit := func(name string) {
-		if name == "" || isPrim(name) {
+		if name == "" || isPrim(name) || strings.HasPrefix(name, "[]") || strings.HasPrefix(name, "map[") {
 			return
 		}
 		ensure(root, name)
@@ -286,7 +286,7 @@ func (g *gen) resolve(raw string) string {
 	return camel(raw)
 }
 
-// goType resolvea a node’s type expression into a valid Go type.
+// goType resolves a node’s type expression into a valid Go type.
 func (g *gen) goType(n *node) string {
 	raw := strings.TrimSpace(n.typeExpr)
 	if raw == "" {
@@ -298,8 +298,13 @@ func (g *gen) goType(n *node) string {
 	if strings.HasPrefix(raw, "*") {
 		return "*" + g.resolve(strings.TrimPrefix(raw, "*"))
 	}
-	if reSlice.MatchString(raw) || reMap.MatchString(raw) {
-		return g.resolve(raw)
+	if reSlice.MatchString(raw) {
+		base := reSlice.FindStringSubmatch(raw)[1]
+		return "[]" + camel(base)
+	}
+	if reMap.MatchString(raw) {
+		base := reMap.FindStringSubmatch(raw)[1]
+		return "map[string]" + camel(base)
 	}
 	return g.resolve(raw)
 }
@@ -318,6 +323,10 @@ func quoteEnums(vals []string) string {
 
 // writeStruct emits Go struct definitions recursively.
 func (g *gen) writeStruct(n *node) {
+	if strings.HasPrefix(n.name, "[]") || strings.HasPrefix(n.name, "map[") {
+		return
+	}
+
 	if n.parent == nil { // root: Config + ConfigSpec
 		g.addImp("k8s.io/apimachinery/pkg/apis/meta/v1")
 
@@ -352,7 +361,6 @@ type quantity string
 	}
 
 	if len(n.child) == 0 {
-		//g.buf.WriteString(fmt.Sprintf("// +kubebuilder:validation:Type=object\n"))
 		g.buf.WriteString(fmt.Sprintf("type %s struct {}\n\n", camel(n.name)))
 		return
 	}
