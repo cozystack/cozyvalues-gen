@@ -496,11 +496,10 @@ func main() {
 
 	// Generate Go files only if required
 	if outGo != "" || outCRD != "" || outSchema != "" {
-		var err error
-		tmpdir, goFilePath, err = writeGeneratedGoAndStub(tree, module)
-		if err != nil {
-			fmt.Printf("write generated: %v\n", err)
-			os.Exit(1)
+		var genErr error
+		tmpdir, goFilePath, genErr = writeGeneratedGoAndStub(tree, module)
+		if genErr != nil {
+			fmt.Printf("write generated: %v\n", genErr)
 		}
 		defer os.RemoveAll(tmpdir)
 	}
@@ -509,7 +508,7 @@ func main() {
 		code, _ := os.ReadFile(goFilePath)
 		_ = os.MkdirAll(filepath.Dir(outGo), 0o755)
 		_ = os.WriteFile(outGo, code, 0o644)
-		fmt.Printf("write Go structs: %s\n", outGo)
+		fmt.Printf("write Go structs (possibly unformatted): %s\n", outGo)
 	}
 
 	var crdBytes []byte
