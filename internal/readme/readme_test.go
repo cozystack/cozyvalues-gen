@@ -374,3 +374,45 @@ test:
 		t.Errorf("expected error about unknown type 'test', got: %v", err)
 	}
 }
+
+func TestNestedFieldAnnotations(t *testing.T) {
+	yamlContent := `
+## @section Alerta configuration
+## @param alerta {alerta} Configuration for Alerta
+## @field alerta.storage {string} Persistent Volume size for alerta database
+## @field alerta.storageClassName {string} StorageClass used to store the data
+## @field alerta.resources {*alertaResources} Resources configuration for alerta
+## @field alertaResources.limits {*resources} Resources limits for alerta
+## @field alertaResources.requests {*resources} Resources requests for alerta
+alerta:
+  storage: 10Gi
+  storageClassName: ""
+  resources:
+    limits:
+      cpu: "1"
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+  alerts:
+    ## @field alerta.alerts {alerts} Configuration for alerts
+    ## @field alerts.telegram {telegramAlerts} Configuration for Telegram alerts
+    telegram:
+      ## @field telegramAlerts.token {string} Telegram token for your bot
+      ## @field telegramAlerts.chatID {string} Specify multiple ID's separated by comma
+      ## @field telegramAlerts.disabledSeverity {string} List of severity without alerts
+      token: "abc"
+      chatID: "123"
+      disabledSeverity: "warn"
+`
+	table := renderTableFromValues(t, yamlContent)
+	if !strings.Contains(table, "`alerta.alerts.telegram.token`") || !strings.Contains(table, "`abc`") {
+		t.Errorf("expected nested telegram token field with abc got:\n%s", table)
+	}
+	if !strings.Contains(table, "`alerta.alerts.telegram.chatID`") || !strings.Contains(table, "`123`") {
+		t.Errorf("expected nested telegram chatID field with 123 got:\n%s", table)
+	}
+	if !strings.Contains(table, "`alerta.alerts.telegram.disabledSeverity`") || !strings.Contains(table, "`warn`") {
+		t.Errorf("expected nested telegram disabledSeverity field with warn got:\n%s", table)
+	}
+}

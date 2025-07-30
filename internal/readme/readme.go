@@ -61,19 +61,28 @@ func createValuesObject(path string) (map[string]interface{}, error) {
 }
 
 func parseMetadataComments(path string) (*Meta, error) {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+
+	// YAML node tree
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return nil, err
+	}
+
 	typeFields = make(map[string][]FieldMeta)
 	var sections []*Section
 	var current *Section
 
-	sectionRe := regexp.MustCompile(`^##\s+@section\s+(.*)$`)
-	paramRe := regexp.MustCompile(`^##\s+@param\s+(\w+)\s+\{([^}]+)\}\s+(.*)$`)
-	fieldRe := regexp.MustCompile(`^##\s+@field\s+([\w\.]+)\s+\{([^}]+)\}\s+(.*)$`)
+	sectionRe := regexp.MustCompile(`^#{1,}\s+@section\s+(.*)$`)
+	paramRe := regexp.MustCompile(`^#{1,}\s+@param\s+(\w+)\s+\{([^}]+)\}\s+(.*)$`)
+	fieldRe := regexp.MustCompile(`^#{1,}\s+@field\s+([\w\.]+)\s+\{([^}]+)\}\s*(.*)$`)
 
-	for _, line := range strings.Split(string(data), "\n") {
+	// First pass: extract all @section, @param, @field from comments
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
 		if m := sectionRe.FindStringSubmatch(line); m != nil {
 			sec := &Section{Name: m[1]}
 			sections = append(sections, sec)
@@ -82,14 +91,7 @@ func parseMetadataComments(path string) (*Meta, error) {
 		}
 		if m := paramRe.FindStringSubmatch(line); m != nil {
 			name, typ, desc := m[1], m[2], m[3]
-			typeName := typ
-			if strings.HasPrefix(typ, "[]") {
-				typeName = typ[2:]
-			} else if strings.HasPrefix(typ, "map[") {
-				if idx := strings.LastIndex(typ, "]"); idx != -1 && idx+1 < len(typ) {
-					typeName = typ[idx+1:]
-				}
-			}
+			typeName := resolveTypeName(typ)
 			pm := ParamMeta{Name: name, TypeOriginal: typ, TypeName: typeName, Description: desc}
 			if current != nil {
 				current.Parameters = append(current.Parameters, pm)
@@ -99,23 +101,72 @@ func parseMetadataComments(path string) (*Meta, error) {
 				}
 				sections[0].Parameters = append(sections[0].Parameters, pm)
 			}
-		} else if m := fieldRe.FindStringSubmatch(line); m != nil {
-			qual, typ, desc := m[1], m[2], m[3]
-			parts := strings.SplitN(qual, ".", 2)
-			root := parts[0]
-			field := ""
-			if len(parts) == 2 {
-				field = parts[1]
-			}
-			typeFields[root] = append(typeFields[root], FieldMeta{
-				ParentTypeName: root,
-				Name:           field,
-				Type:           typ,
-				Description:    desc,
-			})
 		}
 	}
+
+	// Second pass: parse tree and collect inline @field annotations
+	var walk func(node *yaml.Node, path []string)
+	walk = func(node *yaml.Node, path []string) {
+		if node.Kind == yaml.MappingNode {
+			for i := 0; i < len(node.Content); i += 2 {
+				key := node.Content[i]
+				val := node.Content[i+1]
+				name := key.Value
+
+				// Look for comment with @field on this key node
+				comments := key.HeadComment + "\n" + key.LineComment + "\n" + key.FootComment
+				for _, line := range strings.Split(comments, "\n") {
+					if m := fieldRe.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+						qual := m[1]
+						typ := m[2]
+						desc := m[3]
+
+						// allow both relative and full form
+						var rootType, field string
+						if strings.Contains(qual, ".") {
+							parts := strings.SplitN(qual, ".", 2)
+							rootType, field = parts[0], parts[1]
+						} else {
+							rootType = qual
+							field = ""
+						}
+						typeFields[rootType] = append(typeFields[rootType], FieldMeta{
+							ParentTypeName: rootType,
+							Name:           field,
+							Type:           typ,
+							Description:    desc,
+						})
+					}
+				}
+
+				// Recurse into next value
+				if val.Kind == yaml.MappingNode {
+					walk(val, append(path, name))
+				}
+			}
+		}
+	}
+
+	if len(root.Content) > 0 {
+		walk(root.Content[0], nil)
+	}
+
 	return &Meta{Sections: sections}, nil
+}
+
+func resolveTypeName(typ string) string {
+	if strings.HasPrefix(typ, "[]") {
+		return typ[2:]
+	}
+	if strings.HasPrefix(typ, "map[") {
+		if idx := strings.LastIndex(typ, "]"); idx != -1 && idx+1 < len(typ) {
+			return typ[idx+1:]
+		}
+	}
+	if strings.HasPrefix(typ, "*") {
+		return typ[1:]
+	}
+	return typ
 }
 
 func buildAliasMap(params []ParamMeta) map[string]string { return map[string]string{} }

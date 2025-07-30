@@ -63,11 +63,11 @@ var (
 )
 
 var (
-	re       = regexp.MustCompile(`^##\s+@(param|field)\s+([^\s]+)\s+\{([^}]+)\}\s+(.+)$`)
+	re       = regexp.MustCompile(`^#{1,}\s+@(param|field)\s+([^\s]+)\s+\{([^}]+)\}\s*(.*)$`)
 	reAttr   = regexp.MustCompile(`(\w+):"([^"]*)"`)
 	reYamlKV = regexp.MustCompile(`^\s*([A-Za-z0-9_-]+)\s*:\s*(.+?)\s*$`)
-	reSlice  = regexp.MustCompile(`^\s*\[\](\w+)$`)
-	reMap    = regexp.MustCompile(`^\s*map\s*\[string\]\s*(\w+)$`)
+	reSlice  = regexp.MustCompile(`^\s*$begin:math:display$$end:math:display$(\w+)$`)
+	reMap    = regexp.MustCompile(`^\s*map\s*$begin:math:display$string$end:math:display$\s*(\w+)$`)
 )
 
 // parse scans a *.yaml file for annotation lines and returns
