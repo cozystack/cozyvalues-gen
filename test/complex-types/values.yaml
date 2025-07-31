@@ -39,3 +39,20 @@ quantityNullableDefaultCpuShare: "100m"
 ## @param quantityNullableDefaultRam {*quantity} A nullable quantity with a default RAM size.
 quantityNullableDefaultRam: "500MiB"
 
+
+## @section Enumerated parameters
+
+## @param enumWithDefault {string enum:"nano,micro,small,medium,large,xlarge,2xlarge"} Enum variable, defaults to "micro"
+enumWithDefault: "micro"
+
+## @param enumWithoutDefault {string enum:"nano,micro,small,medium,large,xlarge,2xlarge"} Enum variable with no default value.
+enumWithoutDefault:
+
+
+## @param nested {nested} Element with nested enum fields
+nested:
+  ## @param nested.enumWithDefault {string enum:"nano,micro,small,medium,large,xlarge,2xlarge"} Enum variable, defaults to "micro"
+  enumWithDefault: "micro"
+
+  ## @param nested.enumWithoutDefault {string enum:"nano,micro,small,medium,large,xlarge,2xlarge"} Enum variable with no default value.
+  enumWithoutDefault:

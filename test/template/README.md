@@ -2,9 +2,10 @@
 
 
 ## Parameters
-
 ### Test configuration
 
-| Name   | Description   | Type     | Value  |
-| ------ | ------------- | -------- | ------ |
-| `test` | Test variable | `object` | `null` |
+| Name   | Description   | Type     | Value |
+| ------ | ------------- | -------- | ----- |
+| `test` | Test variable | `object` | `{}`  |
+
+

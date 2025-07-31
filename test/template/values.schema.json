@@ -3,7 +3,8 @@
   "type": "object",
   "properties": {
     "test": {
-      "description": "Test variable"
+      "description": "Test variable",
+      "type": "object"
     }
   }
 }

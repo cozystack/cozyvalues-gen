@@ -7,7 +7,7 @@ intList:
 intListSingle:
   - 80
 
-## @param intListMultiple {[]int} A list of integers with one value.
+## @param intListMultiple {[]int} A list of integers with multiple values.
 intListMultiple:
   - 80
   - 8080
@@ -38,14 +38,54 @@ stringListMultiple:
   - "user1"
   - "user2"
 
-## @param stringListNullable {[]*string} A nullable list of strings, empty.
+## @param stringListNullable {*[]string} A nullable list of strings, empty.
 stringListNullable:
 
-## @param stringListNullableSingle {[]*string} A nullable list of strings with one value.
+## @param stringListNullableSingle {*[]string} A nullable list of strings with one value.
 stringListNullableSingle:
   - "user1"
 
-## @param stringListNullableMultiple {[]*string} A nullable list of strings with multiple values.
+## @param stringListNullableMultiple {*[]string} A nullable list of strings with multiple values.
 stringListNullableMultiple:
   - "user1"
   - "user2"
+
+## @param stringListNullable2 {[]*string} A nullable list of strings, empty.
+stringListNullable2:
+
+## @param stringListNullableSingle2 {[]*string} A nullable list of strings with one value.
+stringListNullableSingle2:
+  - "user1"
+
+## @param stringListNullableMultiple2 {[]*string} A nullable list of strings with multiple values.
+stringListNullableMultiple2:
+  - "user1"
+  - "user2"
+
+
+## @section Object lists
+##
+## For example, see metricsStorages in extra/monitoring
+## @param objectList {[]nestedObject} List of nested objects
+## @field nestedObject Nested object
+## @field nestedObject.name {string} String field
+## @field nestedObject.foo {fooType} Object field with custom declared type
+## @field fooType.fizz {int} Nested int field
+## @field fooType.buzz {*quantity} Nested quantity field, nullable
+## @field nestedObject.bar {fooType} Another object field of custom declared type
+
+objectList:
+  - name: "example"
+    foo:
+      fizz: 10
+      buzz: 1GiB
+    bar:
+      fizz: 20
+      buzz: 2GiB
+  - name: "example 2 - not expected to appear in the README"
+    foo:
+      fizz: 10
+      buzz: 1GiB
+    bar:
+      fizz: 20
+      buzz: 2GiB

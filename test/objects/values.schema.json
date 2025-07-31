@@ -5,6 +5,12 @@
     "bar": {
       "description": "Configuration for bar",
       "type": "object",
+      "default": {
+        "db": {
+          "size": "10Gi",
+          "volume": "10Gi"
+        }
+      },
       "required": [
         "db"
       ],
@@ -12,13 +18,24 @@
         "db": {
           "description": "Field with custom type declared locally",
           "type": "object",
+          "default": {
+            "size": "10Gi",
+            "volume": "10Gi"
+          },
           "required": [
-            "size"
+            "size",
+            "volume"
           ],
           "properties": {
             "size": {
               "description": "Sub-field declared with path relative to custom type",
-              "type": "string"
+              "type": "string",
+              "default": "10Gi"
+            },
+            "volume": {
+              "description": "Sub-field declared with path relative to custom type",
+              "type": "string",
+              "default": "10Gi"
             }
           }
         }
@@ -27,6 +44,12 @@
     "foo": {
       "description": "Configuration for foo",
       "type": "object",
+      "default": {
+        "db": {
+          "size": "10Gi",
+          "volume": "10Gi"
+        }
+      },
       "required": [
         "db"
       ],
@@ -34,11 +57,21 @@
         "db": {
           "description": "Field with custom type declared locally",
           "type": "object",
+          "default": {
+            "size": "10Gi",
+            "volume": "10Gi"
+          },
           "required": [
-            "size"
+            "size",
+            "volume"
           ],
           "properties": {
             "size": {
+              "description": "Sub-field declared with path relative to custom type",
+              "type": "string",
+              "default": "10Gi"
+            },
+            "volume": {
               "description": "Sub-field declared with path relative to custom type",
               "type": "string",
               "default": "10Gi"

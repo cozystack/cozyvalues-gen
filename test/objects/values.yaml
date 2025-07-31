@@ -1,18 +1,21 @@
-## @section Complex Object tests
+## @section Declaration through custom type
 
 ## @param foo {foo} Configuration for foo
 ## @field foo.db {fooDB} Field with custom type declared locally
 ## @field fooDB.size {string} Sub-field declared with path relative to custom type
+## @field fooDB.volume {string} Sub-field declared with path relative to custom type
 
 foo:
   db:
     size: 10Gi
+    volume: 10Gi
+
+## @section Declaration with direct path
 
 ## @param bar {bar} Configuration for bar
-## @field bar.db {barDB} Field with custom type declared locally
-## @field barDB.size {string} Sub-field declared with path relative to custom type
+## @field bar.db {fooDB} Field with custom type declared locally
+## @field bar.db.size {string} Sub-field declared with absolute path
 ## @field bar.db.volume {string} Sub-field declared with absolute path
-
 bar:
   db:
     size: 10Gi

@@ -2,6 +2,40 @@
   "title": "Chart Values",
   "type": "object",
   "properties": {
+    "enumWithDefault": {
+      "description": "Enum variable, defaults to \"micro\"",
+      "type": "string",
+      "default": "micro",
+      "enum": [
+        "nano",
+        "micro",
+        "small",
+        "medium",
+        "large",
+        "xlarge",
+        "2xlarge"
+      ]
+    },
+    "enumWithoutDefault": {
+      "description": "Enum variable with no default value.",
+      "type": "string",
+      "enum": [
+        "nano",
+        "micro",
+        "small",
+        "medium",
+        "large",
+        "xlarge",
+        "2xlarge"
+      ]
+    },
+    "nested": {
+      "description": "Element with nested enum fields",
+      "type": "object",
+      "default": {
+        "enumWithCustomTypeDefault": "micro"
+      }
+    },
     "quantityDefaultCpuShare": {
       "description": "A quantity default with vCPU share.",
       "type": "string",
