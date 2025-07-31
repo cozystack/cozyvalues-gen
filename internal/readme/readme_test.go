@@ -64,7 +64,7 @@ backup:
 func TestArrayWithValues(t *testing.T) {
 	yamlContent := `
 ## @param metricsStorages {[]metricsStorage} Metrics storage
-## @field metricsStorage.name {string} Name
+## @field metricsStorage.name {string default="5d"} Name
 ## @field metricsStorage.retentionPeriod {string} Retention
 metricsStorages:
 - name: shortterm
@@ -73,14 +73,17 @@ metricsStorages:
   retentionPeriod: "14d"
 `
 	table := renderTableFromValues(t, yamlContent)
-	if !strings.Contains(table, "`metricsStorages`") || !strings.Contains(table, "`[]`") {
-		t.Errorf("expected root array with `[]`, got:\n%s", table)
+	if !strings.Contains(table, "`metricsStorages`") || !strings.Contains(table, "`[...]`") {
+		t.Errorf("expected root array with `[...]`, got:\n%s", table)
 	}
-	if !strings.Contains(table, "`metricsStorages[0].name`") || !strings.Contains(table, "`shortterm`") {
-		t.Errorf("expected first element name shortterm, got:\n%s", table)
+	if !strings.Contains(table, "`[]object`") {
+		t.Errorf("expected type to be `[]object`, got:\n%s", table)
 	}
-	if !strings.Contains(table, "`metricsStorages[1].retentionPeriod`") || !strings.Contains(table, "`14d`") {
-		t.Errorf("expected second element retention 14d, got:\n%s", table)
+	if !strings.Contains(table, "`metricsStorages[i].name`") || !strings.Contains(table, "`\"\"`") {
+		t.Errorf("expected element name shortterm with [i], got:\n%s", table)
+	}
+	if !strings.Contains(table, "`metricsStorages[i].retentionPeriod`") || !strings.Contains(table, "`5d`") {
+		t.Errorf("expected element retention 5d with [i], got:\n%s", table)
 	}
 }
 
@@ -111,11 +114,14 @@ databases:
       admin: ["user1","user2"]
 `
 	table := renderTableFromValues(t, yamlContent)
-	if !strings.Contains(table, "`databases`") || !strings.Contains(table, "`{}`") {
-		t.Errorf("expected databases map with `{}`, got:\n%s", table)
+	if !strings.Contains(table, "`databases`") || !strings.Contains(table, "`{...}`") {
+		t.Errorf("expected databases map with `{...}`, got:\n%s", table)
 	}
-	if !strings.Contains(table, "`databases[myapp].roles.admin`") || !strings.Contains(table, "`[user1, user2]`") {
-		t.Errorf("expected nested roles.admin array with users, got:\n%s", table)
+	if !strings.Contains(table, "`map[string]object`") {
+		t.Errorf("expected type to be `map[string]object`, got:\n%s", table)
+	}
+	if !strings.Contains(table, "`databases[name].roles.admin`") || !strings.Contains(table, "`[]`") {
+		t.Errorf("expected nested roles.admin array without users, got:\n%s", table)
 	}
 }
 

@@ -180,9 +180,32 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 	var out []ParamToRender
 	for _, pm := range params {
 		typDisplay := normalizeType(pm.TypeOriginal)
-
 		val := defaultValueForType(pm.TypeOriginal)
+		baseType := deriveTypeName(pm.TypeOriginal)
 
+		// Arrays of objects
+		if strings.HasPrefix(pm.TypeOriginal, "[]") && !isPrimitive(baseType) {
+			if len(typeFields[baseType]) > 0 {
+				raw, ok := valuesMap[pm.Name].([]interface{})
+				if !ok || len(raw) == 0 {
+					val = "`[]`"
+				} else {
+					val = "`[...]`"
+				}
+			}
+			// Maps of objects → use {...} when fields are defined
+		} else if strings.HasPrefix(pm.TypeOriginal, "map[") && !isPrimitive(baseType) {
+			if len(typeFields[baseType]) > 0 {
+				val = "`{...}`"
+			} else {
+				val = "`{}`"
+			}
+			// Plain objects → always {}
+		} else if !isPrimitive(baseType) && len(typeFields[baseType]) > 0 {
+			val = "`{}`"
+		}
+
+		// Primitives
 		if isPrimitive(pm.TypeOriginal) || strings.HasPrefix(pm.TypeOriginal, "*") || strings.Contains(pm.TypeOriginal, "quantity") || (strings.HasPrefix(pm.TypeOriginal, "[]") && isPrimitive(pm.TypeName)) {
 			rawVal, exists := valuesMap[pm.Name]
 			val = valueString(rawVal, exists, pm.TypeOriginal)
@@ -205,32 +228,10 @@ func traverseParam(pm ParamMeta, rawVal interface{}, exists bool) []ParamToRende
 	if strings.HasPrefix(typ, "[]") {
 		etype := pm.TypeName
 		if !isPrimitive(etype) {
-			items := []interface{}{}
-			if exists {
-				if s, ok := rawVal.([]interface{}); ok {
-					items = s
-				}
-			}
-			if len(items) > 0 {
-				for i, it := range items {
-					rows = append(rows, traverseByType(fmt.Sprintf("%s[%d]", pm.Name, i), it, etype)...)
-				}
-			} else {
-				rows = append(rows, traverseByType(fmt.Sprintf("%s[i]", pm.Name), map[string]interface{}{}, pm.TypeName)...)
-			}
+			rows = append(rows, traverseByType(fmt.Sprintf("%s[i]", pm.Name), map[string]interface{}{}, pm.TypeName)...)
 		}
 	} else if strings.HasPrefix(typ, "map[") {
-		if exists {
-			if m, ok := rawVal.(map[string]interface{}); ok && len(m) > 0 {
-				for k, v := range m {
-					rows = append(rows, traverseByType(fmt.Sprintf("%s[%s]", pm.Name, k), v, pm.TypeName)...)
-				}
-			} else {
-				rows = append(rows, traverseByType(fmt.Sprintf("%s[name]", pm.Name), map[string]interface{}{}, pm.TypeName)...)
-			}
-		} else {
-			rows = append(rows, traverseByType(fmt.Sprintf("%s[name]", pm.Name), map[string]interface{}{}, pm.TypeName)...)
-		}
+		rows = append(rows, traverseByType(fmt.Sprintf("%s[name]", pm.Name), map[string]interface{}{}, pm.TypeName)...)
 	} else {
 		rows = append(rows, traverseByType(pm.Name, rawVal, pm.TypeName)...)
 	}
@@ -248,14 +249,23 @@ func traverseByType(path string, raw interface{}, typeName string) []ParamToRend
 			continue
 		}
 		val, ok := m[fm.Name]
-
 		baseType := deriveTypeName(fm.Type)
 		isArrayOfPrimitives := strings.HasPrefix(fm.Type, "[]") && isPrimitive(baseType)
 		isDirectPrimitive := isPrimitive(baseType) || strings.Contains(baseType, "quantity")
 
 		value := defaultValueForType(fm.Type)
 		if isDirectPrimitive || isArrayOfPrimitives {
-			value = valueString(val, ok, fm.Type)
+			if ok {
+				value = valueString(val, ok, fm.Type)
+			} else {
+				// use default from annotation if present
+				if strings.Contains(fm.Type, "default=") {
+					defRe := regexp.MustCompile(`default="([^"]*)"`)
+					if m := defRe.FindStringSubmatch(fm.Type); len(m) == 2 {
+						value = fmt.Sprintf("`%s`", m[1])
+					}
+				}
+			}
 		}
 
 		rows = append(rows, ParamToRender{
@@ -302,11 +312,26 @@ func normalizeType(t string) string {
 		t = t[:idx]
 	}
 
+	// quantity → string
 	if strings.HasSuffix(t, "quantity") {
 		if strings.HasPrefix(t, "*") {
 			return "*string"
 		}
 		return "string"
+	}
+
+	// Handle array types
+	if strings.HasPrefix(t, "[]") {
+		base := deriveTypeName(t)
+		if !isPrimitive(base) {
+			return "[]object"
+		}
+		return "[]" + base
+	}
+
+	// Handle map types
+	if strings.HasPrefix(t, "map[") {
+		return "map[string]object"
 	}
 
 	if strings.HasPrefix(t, "*") {
@@ -415,7 +440,7 @@ func markdownTable(rows []ParamToRender) string {
 
 func renderSection(sec *Section) string {
 	rows := buildParamsToRender(sec.Parameters)
-	return fmt.Sprintf("### %s\n\n%s\n", sec.Name, markdownTable(rows))
+	return fmt.Sprintf("\n### %s\n\n%s", sec.Name, markdownTable(rows))
 }
 
 func validateValues(params []ParamMeta, typeFields map[string][]FieldMeta, values map[string]interface{}) error {
