@@ -1,0 +1,84 @@
+{
+  "title": "Chart Values",
+  "type": "object",
+  "properties": {
+    "bar": {
+      "description": "Configuration for bar",
+      "type": "object",
+      "default": {
+        "db": {
+          "size": "10Gi",
+          "volume": "10Gi"
+        }
+      },
+      "required": [
+        "db"
+      ],
+      "properties": {
+        "db": {
+          "description": "Field with custom type declared locally",
+          "type": "object",
+          "default": {
+            "size": "10Gi",
+            "volume": "10Gi"
+          },
+          "required": [
+            "size",
+            "volume"
+          ],
+          "properties": {
+            "size": {
+              "description": "Sub-field declared with path relative to custom type",
+              "type": "string",
+              "default": "10Gi"
+            },
+            "volume": {
+              "description": "Sub-field declared with path relative to custom type",
+              "type": "string",
+              "default": "10Gi"
+            }
+          }
+        }
+      }
+    },
+    "foo": {
+      "description": "Configuration for foo",
+      "type": "object",
+      "default": {
+        "db": {
+          "size": "10Gi",
+          "volume": "10Gi"
+        }
+      },
+      "required": [
+        "db"
+      ],
+      "properties": {
+        "db": {
+          "description": "Field with custom type declared locally",
+          "type": "object",
+          "default": {
+            "size": "10Gi",
+            "volume": "10Gi"
+          },
+          "required": [
+            "size",
+            "volume"
+          ],
+          "properties": {
+            "size": {
+              "description": "Sub-field declared with path relative to custom type",
+              "type": "string",
+              "default": "10Gi"
+            },
+            "volume": {
+              "description": "Sub-field declared with path relative to custom type",
+              "type": "string",
+              "default": "10Gi"
+            }
+          }
+        }
+      }
+    }
+  }
+}

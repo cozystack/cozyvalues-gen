@@ -8,7 +8,7 @@
 external: false
 externalMethod: PortList
 externalPorts:
-- 22
+  - 22
 
 ## @param running {bool} if the virtual machine should be running
 running: true

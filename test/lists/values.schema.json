@@ -1,0 +1,175 @@
+{
+  "title": "Chart Values",
+  "type": "object",
+  "properties": {
+    "intList": {
+      "description": "A required list of integers, empty.",
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "intListMultiple": {
+      "description": "A list of integers with multiple values.",
+      "type": "array",
+      "default": [
+        80,
+        8080
+      ],
+      "items": {
+        "type": "integer"
+      }
+    },
+    "intListNullable": {
+      "description": "A nullable list of integers, empty.",
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "intListNullableMultiple": {
+      "description": "A nullable list of integers with multiple values.",
+      "type": "array",
+      "default": [
+        80,
+        8080
+      ],
+      "items": {
+        "type": "integer"
+      }
+    },
+    "intListNullableSingle": {
+      "description": "A nullable list of integers with one value.",
+      "type": "array",
+      "default": [
+        80
+      ],
+      "items": {
+        "type": "integer"
+      }
+    },
+    "intListSingle": {
+      "description": "A list of integers with one value.",
+      "type": "array",
+      "default": [
+        80
+      ],
+      "items": {
+        "type": "integer"
+      }
+    },
+    "objectList": {
+      "description": "List of nested objects",
+      "type": "array",
+      "default": [
+        {
+          "bar": {
+            "buzz": "2GiB",
+            "fizz": 20
+          },
+          "foo": {
+            "buzz": "1GiB",
+            "fizz": 10
+          },
+          "name": "example"
+        },
+        {
+          "bar": {
+            "buzz": "2GiB",
+            "fizz": 20
+          },
+          "foo": {
+            "buzz": "1GiB",
+            "fizz": 10
+          },
+          "name": "example 2 - not expected to appear in the README"
+        }
+      ],
+      "items": {}
+    },
+    "stringList": {
+      "description": "A required list of strings, empty.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "stringListMultiple": {
+      "description": "A required list of strings with multiple values.",
+      "type": "array",
+      "default": [
+        "user1",
+        "user2"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "stringListNullable": {
+      "description": "A nullable list of strings, empty.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "stringListNullable2": {
+      "description": "A nullable list of strings, empty.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "stringListNullableMultiple": {
+      "description": "A nullable list of strings with multiple values.",
+      "type": "array",
+      "default": [
+        "user1",
+        "user2"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "stringListNullableMultiple2": {
+      "description": "A nullable list of strings with multiple values.",
+      "type": "array",
+      "default": [
+        "user1",
+        "user2"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "stringListNullableSingle": {
+      "description": "A nullable list of strings with one value.",
+      "type": "array",
+      "default": [
+        "user1"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "stringListNullableSingle2": {
+      "description": "A nullable list of strings with one value.",
+      "type": "array",
+      "default": [
+        "user1"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "stringListSingle": {
+      "description": "A required list of strings with one value.",
+      "type": "array",
+      "default": [
+        "user1"
+      ],
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

@@ -1,0 +1,91 @@
+## @section Integer lists
+
+## @param intList {[]int} A required list of integers, empty.
+intList:
+
+## @param intListSingle {[]int} A list of integers with one value.
+intListSingle:
+  - 80
+
+## @param intListMultiple {[]int} A list of integers with multiple values.
+intListMultiple:
+  - 80
+  - 8080
+
+## @param intListNullable {[]*int} A nullable list of integers, empty.
+intListNullable:
+
+## @param intListNullableSingle {[]*int} A nullable list of integers with one value.
+intListNullableSingle:
+  - 80
+
+## @param intListNullableMultiple {[]*int} A nullable list of integers with multiple values.
+intListNullableMultiple:
+  - 80
+  - 8080
+
+## @section String lists
+
+## @param stringList {[]string} A required list of strings, empty.
+stringList:
+
+## @param stringListSingle {[]string} A required list of strings with one value.
+stringListSingle:
+  - "user1"
+
+## @param stringListMultiple {[]string} A required list of strings with multiple values.
+stringListMultiple:
+  - "user1"
+  - "user2"
+
+## @param stringListNullable {*[]string} A nullable list of strings, empty.
+stringListNullable:
+
+## @param stringListNullableSingle {*[]string} A nullable list of strings with one value.
+stringListNullableSingle:
+  - "user1"
+
+## @param stringListNullableMultiple {*[]string} A nullable list of strings with multiple values.
+stringListNullableMultiple:
+  - "user1"
+  - "user2"
+
+## @param stringListNullable2 {[]*string} A nullable list of strings, empty.
+stringListNullable2:
+
+## @param stringListNullableSingle2 {[]*string} A nullable list of strings with one value.
+stringListNullableSingle2:
+  - "user1"
+
+## @param stringListNullableMultiple2 {[]*string} A nullable list of strings with multiple values.
+stringListNullableMultiple2:
+  - "user1"
+  - "user2"
+
+
+## @section Object lists
+##
+## For example, see metricsStorages in extra/monitoring
+## @param objectList {[]nestedObject} List of nested objects
+## @field nestedObject Nested object
+## @field nestedObject.name {string} String field
+## @field nestedObject.foo {fooType} Object field with custom declared type
+## @field fooType.fizz {int} Nested int field
+## @field fooType.buzz {*quantity} Nested quantity field, nullable
+## @field nestedObject.bar {fooType} Another object field of custom declared type
+
+objectList:
+  - name: "example"
+    foo:
+      fizz: 10
+      buzz: 1GiB
+    bar:
+      fizz: 20
+      buzz: 2GiB
+  - name: "example 2 - not expected to appear in the README"
+    foo:
+      fizz: 10
+      buzz: 1GiB
+    bar:
+      fizz: 20
+      buzz: 2GiB
