@@ -1,0 +1,120 @@
+{
+  "title": "Chart Values",
+  "type": "object",
+  "properties": {
+    "enumWithDefault": {
+      "description": "Enum variable, defaults to \"micro\"",
+      "type": "string",
+      "default": "micro",
+      "enum": [
+        "nano",
+        "micro",
+        "small",
+        "medium",
+        "large",
+        "xlarge",
+        "2xlarge"
+      ]
+    },
+    "enumWithoutDefault": {
+      "description": "Enum variable with no default value.",
+      "type": "string",
+      "enum": [
+        "nano",
+        "micro",
+        "small",
+        "medium",
+        "large",
+        "xlarge",
+        "2xlarge"
+      ]
+    },
+    "nested": {
+      "description": "Element with nested enum fields",
+      "type": "object",
+      "default": {
+        "enumWithCustomTypeDefault": "micro"
+      }
+    },
+    "quantityDefaultCpuShare": {
+      "description": "A quantity default with vCPU share.",
+      "type": "string",
+      "default": "100m",
+      "pattern": "^(\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))))?$",
+      "x-kubernetes-int-or-string": true
+    },
+    "quantityDefaultInt": {
+      "description": "A quantity default with a bare integer.",
+      "type": "string",
+      "default": "2",
+      "pattern": "^(\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))))?$",
+      "x-kubernetes-int-or-string": true
+    },
+    "quantityDefaultRam": {
+      "description": "A quantity default with RAM size.",
+      "type": "string",
+      "default": "500MiB",
+      "pattern": "^(\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))))?$",
+      "x-kubernetes-int-or-string": true
+    },
+    "quantityDefaultStrInt": {
+      "description": "A quantity default with a quoted integer.",
+      "type": "string",
+      "default": "2",
+      "pattern": "^(\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))))?$",
+      "x-kubernetes-int-or-string": true
+    },
+    "quantityNullable": {
+      "description": "A nullable quantity value.",
+      "type": "string",
+      "pattern": "^(\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))))?$",
+      "x-kubernetes-int-or-string": true
+    },
+    "quantityNullableDefaultCpuShare": {
+      "description": "A nullable quantity with a default CPU share.",
+      "type": "string",
+      "default": "100m",
+      "pattern": "^(\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))))?$",
+      "x-kubernetes-int-or-string": true
+    },
+    "quantityNullableDefaultInt": {
+      "description": "A nullable quantity with a default bare integer.",
+      "type": "string",
+      "default": "2",
+      "pattern": "^(\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))))?$",
+      "x-kubernetes-int-or-string": true
+    },
+    "quantityNullableDefaultRam": {
+      "description": "A nullable quantity with a default RAM size.",
+      "type": "string",
+      "default": "500MiB",
+      "pattern": "^(\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))))?$",
+      "x-kubernetes-int-or-string": true
+    },
+    "quantityNullableDefaultStrInt": {
+      "description": "A nullable quantity with a default quoted integer.",
+      "type": "string",
+      "default": "2",
+      "pattern": "^(\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))))?$",
+      "x-kubernetes-int-or-string": true
+    },
+    "quantityNullableRequiredEmpty": {
+      "description": "A nullable quantity value with empty string (CPU cores or RAM).",
+      "type": "string",
+      "pattern": "^(\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))))?$",
+      "x-kubernetes-int-or-string": true
+    },
+    "quantityRequired": {
+      "description": "A required quantity value (CPU cores or RAM).",
+      "type": "string",
+      "pattern": "^(\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))))?$",
+      "x-kubernetes-int-or-string": true
+    },
+    "quantityRequiredEmpty": {
+      "description": "A required quantity value with empty string (CPU cores or RAM).",
+      "type": "string",
+      "pattern": "^(\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\\+|-)?(([0-9]+(\\.[0-9]*)?)|(\\.[0-9]+))))?$",
+      "x-kubernetes-int-or-string": true
+    }
+  }
+}

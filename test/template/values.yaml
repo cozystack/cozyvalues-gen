@@ -1,0 +1,4 @@
+## @section Test configuration
+
+## @param test {test} Test variable
+test:

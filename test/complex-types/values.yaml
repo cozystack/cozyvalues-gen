@@ -1,0 +1,58 @@
+## @section Quantity parameters
+
+## @param quantityRequired {quantity} A required quantity value (CPU cores or RAM).
+quantityRequired:
+
+## @param quantityRequiredEmpty {quantity} A required quantity value with empty string (CPU cores or RAM).
+quantityRequiredEmpty: ""
+  
+## @param quantityDefaultInt {quantity} A quantity default with a bare integer.
+quantityDefaultInt: 2
+
+## @param quantityDefaultStrInt {quantity} A quantity default with a quoted integer.
+quantityDefaultStrInt: "2"
+
+## @param quantityDefaultCpuShare {quantity} A quantity default with vCPU share.
+quantityDefaultCpuShare: "100m"
+
+## @param quantityDefaultRam {quantity} A quantity default with RAM size.
+quantityDefaultRam: "500MiB"
+
+
+## @section Nullable quantity parameters
+
+## @param quantityNullable {*quantity} A nullable quantity value.
+quantityNullable:
+
+## @param quantityNullableRequiredEmpty {*quantity} A nullable quantity value with empty string (CPU cores or RAM).
+quantityNullableRequiredEmpty: ""
+
+## @param quantityNullableDefaultInt {*quantity} A nullable quantity with a default bare integer.
+quantityNullableDefaultInt: 2
+
+## @param quantityNullableDefaultStrInt {*quantity} A nullable quantity with a default quoted integer.
+quantityNullableDefaultStrInt: "2"
+
+## @param quantityNullableDefaultCpuShare {*quantity} A nullable quantity with a default CPU share.
+quantityNullableDefaultCpuShare: "100m"
+
+## @param quantityNullableDefaultRam {*quantity} A nullable quantity with a default RAM size.
+quantityNullableDefaultRam: "500MiB"
+
+
+## @section Enumerated parameters
+
+## @param enumWithDefault {string enum:"nano,micro,small,medium,large,xlarge,2xlarge"} Enum variable, defaults to "micro"
+enumWithDefault: "micro"
+
+## @param enumWithoutDefault {string enum:"nano,micro,small,medium,large,xlarge,2xlarge"} Enum variable with no default value.
+enumWithoutDefault:
+
+
+## @param nested {nested} Element with nested enum fields
+nested:
+  ## @param nested.enumWithDefault {string enum:"nano,micro,small,medium,large,xlarge,2xlarge"} Enum variable, defaults to "micro"
+  enumWithDefault: "micro"
+
+  ## @param nested.enumWithoutDefault {string enum:"nano,micro,small,medium,large,xlarge,2xlarge"} Enum variable with no default value.
+  enumWithoutDefault:

@@ -1,0 +1,40 @@
+## @section Integer parameters
+
+## @param testInt {int} Integer variable
+testInt:
+## @param testIntDefault {int} Integer variable with default value
+testIntDefault: 10
+## @param testIntNullable {*int} Integer variable, nullable
+testIntNullable:
+## @param testIntDefaultNullable {*int} Integer variable with default value, nullable
+testIntDefaultNullable: 10
+
+## @section Boolean parameters
+
+## @param testBool {bool} Boolean variable
+testBool:
+## @param testBoolFalse {bool} Boolean variable, defaults to false
+testBoolFalse: false
+## @param testBoolTrue {bool} Boolean variable, defaults to true
+testBoolTrue: true
+## @param testBoolNullable {*bool} Boolean variable, nullable
+testBoolNullable:
+## @param testBoolFalseNullable {*bool} Boolean variable, defaults to false, nullable
+testBoolFalseNullable: false
+## @param testBoolTrueNullable {*bool} Boolean variable, defaults to true, nullable
+testBoolTrueNullable: true
+
+## @section String parameters
+
+## @param testString {string} String variable
+testString:
+## @param testStringEmpty {string} String variable, empty by default
+testStringEmpty: ""
+## @param testStringDefault {string} String variable with default value
+testStringDefault: "string value"
+## @param testStringNullable {*string} String variable, nullable
+testStringNullable:
+## @param testStringEmptyNullable {*string} String variable, empty by default, nullable
+testStringEmptyNullable: ""
+## @param testStringDefaultNullable {*string} String variable with default value, nullable
+testStringDefaultNullable: "string value"
