@@ -271,3 +271,163 @@ metricsStorages:
 		}
 	}
 }
+
+/* -------------------------------------------------------------------------- */
+/*  helpers                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/* -------------------------------------------------------------------------- */
+/*  table-driven check for isStringFormat                                      */
+/* -------------------------------------------------------------------------- */
+
+func TestIsStringFormat(t *testing.T) {
+	for _, f := range stringFormats {
+		require.Truef(t, isStringFormat(f), "expected %s to be recognised", f)
+	}
+	require.False(t, isStringFormat("not_a_format"))
+}
+
+/* -------------------------------------------------------------------------- */
+/*  +kubebuilder:validation:Format injected into generated Go code            */
+/* -------------------------------------------------------------------------- */
+
+func TestEmitFieldAddsFormatAnnotation(t *testing.T) {
+	const valuesYAML = `
+## @param serverHost {hostname} public host
+serverHost: "grafana.example.com"
+`
+	rows, err := Parse(writeTempFile(valuesYAML))
+	require.NoError(t, err)
+	root := Build(rows)
+
+	g := &gen{pkg: "values"}
+	formatted, _, err := g.Generate(root)
+	require.NoError(t, err)
+	code := string(formatted)
+
+	require.Contains(t, code, "// +kubebuilder:validation:Format=hostname",
+		"validation format annotation not found in generated code")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  resulting JSON-Schema contains “format”                                   */
+/* -------------------------------------------------------------------------- */
+
+func TestSchemaContainsStringFormat(t *testing.T) {
+	const yamlContent = `
+## @param apiURL {uri} External URL
+apiURL: ""
+`
+	tmpValues := writeTempFile(yamlContent)
+	rows, _ := Parse(tmpValues)
+	root := Build(rows)
+
+	// generate stub project & CRD → schema
+	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	crdBytes, err := CG(filepath.Dir(goFile))
+	require.NoError(t, err)
+
+	outSchema := filepath.Join(tmpDir, "values.schema.json")
+	require.NoError(t, WriteValuesSchema(crdBytes, outSchema))
+
+	raw, err := os.ReadFile(outSchema)
+	require.NoError(t, err)
+
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(raw, &schema))
+
+	props := schema["properties"].(map[string]any)
+	apiURL := props["apiURL"].(map[string]any)
+
+	require.Equal(t, "string", apiURL["type"])
+	require.Equal(t, "uri", apiURL["format"])
+}
+
+/* -------------------------------------------------------------------------- */
+/*  resolve() special aliases                                                 */
+/* -------------------------------------------------------------------------- */
+
+func TestResolveSpecialAliases(t *testing.T) {
+	g := &gen{pkg: "values"}
+
+	require.Equal(t, "v1.Duration", g.resolve("duration"))
+	require.Equal(t, "resource.Quantity", g.resolve("quantity"))
+	require.Equal(t, "v1.Time", g.resolve("time"))
+
+	// ensure imports were recorded
+	require.Contains(t, g.imp, "k8s.io/apimachinery/pkg/apis/meta/v1")
+	require.Contains(t, g.imp, "k8s.io/apimachinery/pkg/api/resource")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  CollectUndefined ignores recognised formats                               */
+/* -------------------------------------------------------------------------- */
+
+func TestCollectUndefinedWithFormats(t *testing.T) {
+	rows := []Raw{
+		{K: kParam, Path: []string{"email"}, TypeExpr: "email"},
+		{K: kParam, Path: []string{"host"}, TypeExpr: "hostname"},
+	}
+	root := Build(rows)
+	require.Empty(t, CollectUndefined(root))
+}
+
+func TestNoAliasStructsGenerated(t *testing.T) {
+	const valuesYAML = `
+## @param size {quantity} disk size
+size: "4Gi"
+## @param ttl {duration} ttl for job
+ttl: "5m"
+`
+
+	rows, err := Parse(writeTempFile(valuesYAML))
+	require.NoError(t, err)
+	root := Build(rows)
+
+	g := &gen{pkg: "values"}
+	formatted, _, err := g.Generate(root)
+	require.NoError(t, err)
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "", formatted, 0)
+	require.NoError(t, err)
+
+	found := make(map[string]bool)
+	ast.Inspect(file, func(n ast.Node) bool {
+		if ts, ok := n.(*ast.TypeSpec); ok {
+			if _, ok := ts.Type.(*ast.StructType); ok {
+				found[ts.Name.Name] = true
+			}
+		}
+		return true
+	})
+
+	// Ensure alias structs are absent
+	require.False(t, found["Quantity"], "unexpected empty struct Quantity")
+	require.False(t, found["Duration"], "unexpected empty struct Duration")
+}
+
+func TestAliasFieldResolution(t *testing.T) {
+	const yamlContent = `
+## @param foaao {asdaa}
+## @field foaao.foaa {int64}
+foaao:
+  aaa: 1
+`
+	rows, err := Parse(writeTempFile(yamlContent))
+	require.NoError(t, err)
+	root := Build(rows)
+
+	g := &gen{pkg: "values"}
+	code, _, err := g.Generate(root)
+	require.NoError(t, err)
+
+	structs := extractStructs(string(code))
+	require.Contains(t, structs, "Asdaa", "alias struct missing")
+	require.Equal(t, 1, structs["Asdaa"], "Asdaa should have one field")
+	require.Contains(t, extractTypeRefs(string(code)), "Asdaa",
+		"ConfigSpec must reference Asdaa")
+}

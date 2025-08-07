@@ -51,6 +51,42 @@ var (
 	reMap = regexp.MustCompile(`^\s*map\s*$begin:math:display$\\s*string\\s*$end:math:display$\s*(\*?[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*$`)
 )
 
+// additional string-format aliases
+// see https://github.com/go-openapi/strfmt/blob/master/README.md
+var stringFormats = []string{
+	"bsonobjectid",
+	"uri",
+	"email",
+	"hostname",
+	"ipv4",
+	"ipv6",
+	"cidr",
+	"mac",
+	"uuid",
+	"uuid3",
+	"uuid4",
+	"uuid5",
+	"isbn",
+	"isbn10",
+	"isbn13",
+	"creditcard",
+	"ssn",
+	"hexcolor",
+	"rgbcolor",
+	"byte",
+	"password",
+	"date",
+}
+
+func isStringFormat(s string) bool {
+	for _, f := range stringFormats {
+		if s == f {
+			return true
+		}
+	}
+	return false
+}
+
 func Parse(file string) ([]Raw, error) {
 	data, err := os.ReadFile(file)
 	if err != nil {
@@ -155,8 +191,19 @@ func Build(rows []Raw) *Node {
 	}
 
 	for _, r := range rows {
+		// allow “@field <param>.<field>” even when <param> is declared with alias type
+		segments := append([]string(nil), r.Path...)
+		if r.K == kField && len(segments) > 1 {
+			if pnode, ok := root.Child[segments[0]]; ok {
+				alias := strings.TrimPrefix(strings.TrimSpace(pnode.TypeExpr), "*")
+				if alias != "" && !isPrim(alias) {
+					segments[0] = alias
+				}
+			}
+		}
+
 		cur := root
-		for i, seg := range r.Path {
+		for i, seg := range segments {
 			cur = ensure(cur, seg)
 			if i == len(r.Path)-1 {
 				if r.K == kParam {
@@ -205,9 +252,12 @@ func (g *gen) addImp(p string) {
 }
 
 func isPrimitive(t string) bool {
+	if isStringFormat(t) {
+		return true
+	}
 	switch t {
 	case "string", "bool", "int", "int32", "int64", "float32", "float64",
-		"quantity":
+		"quantity", "duration", "time":
 		return true
 	default:
 		return false
@@ -237,20 +287,33 @@ func (g *gen) resolve(raw string) string {
 	if raw == "" {
 		return "string"
 	}
+	if isStringFormat(raw) {
+		return "string"
+	}
+
+	// --- alias section (runs before isPrimitive) ------------------- //
+	switch raw {
+	case "quantity":
+		g.addImp("k8s.io/apimachinery/pkg/api/resource")
+		return "resource.Quantity"
+	case "duration":
+		g.addImp("k8s.io/apimachinery/pkg/apis/meta/v1")
+		return "v1.Duration"
+	case "time":
+		g.addImp("k8s.io/apimachinery/pkg/apis/meta/v1")
+		return "v1.Time"
+	}
+	// ---------------------------------------------------------------- //
+
 	if isPrimitive(raw) || raw == "any" {
 		return raw
 	}
 	if strings.HasPrefix(raw, "map[") || strings.HasPrefix(raw, "[]") {
 		return raw
 	}
-	if strings.Contains(raw, ".") {
-		if raw == "quantity" {
-			return "string"
-		}
-		if idx := strings.LastIndex(raw, "."); idx != -1 {
-			g.addImp(raw[:idx])
-			return raw[idx+1:]
-		}
+	if idx := strings.LastIndex(raw, "."); idx != -1 {
+		g.addImp(raw[:idx])
+		return raw[idx+1:]
 	}
 	return camel(raw)
 }
@@ -318,12 +381,6 @@ func (g *gen) writeStruct(n *Node) {
 			g.writeStruct(c)
 		}
 
-		g.buf.WriteString(`
-// +kubebuilder:validation:Pattern=` + "`" + `^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$` + "`" + `
-// +kubebuilder:validation:XIntOrString
-type quantity string
-
-`)
 		return
 	}
 
@@ -346,17 +403,26 @@ type quantity string
 func (g *gen) emitField(c *Node) {
 	field := camel(c.Name)
 	typ := g.goType(c)
+
 	if c.Comment != "" {
 		g.buf.WriteString("    // " + c.Comment + "\n")
 	}
+
+	if f := strings.TrimPrefix(strings.TrimSpace(c.TypeExpr), "*"); isStringFormat(f) &&
+		!strings.HasPrefix(typ, "[]") && !strings.HasPrefix(typ, "map[") {
+		g.buf.WriteString("    // +kubebuilder:validation:Format=" + f + "\n")
+	}
+
 	if len(c.Enums) > 0 {
 		g.buf.WriteString("    // +kubebuilder:validation:Enum=" + quoteEnums(c.Enums) + "\n")
 	}
+
 	if c.DefaultVal != "" {
 		if def := formatDefault(c.DefaultVal, typ); def != "" {
 			g.buf.WriteString("    // +kubebuilder:default:=" + def + "\n")
 		}
 	}
+
 	tag := "`json:\"" + c.Name
 	if strings.HasPrefix(typ, "[]") || strings.HasPrefix(typ, "map[") || strings.HasPrefix(typ, "*") {
 		tag += ",omitempty"
@@ -460,13 +526,50 @@ go 1.20
 	if err := os.WriteFile(filepath.Join(stubModuleDir, "go.mod"), []byte(stubMod), 0o644); err != nil {
 		return "", "", err
 	}
+
+	/* ---------- stub k8s.io/apimachinery/pkg/apis/meta/v1 ---------- */
+
 	stubCode := `package v1
 
 type TypeMeta struct{}
 type ObjectMeta struct{}
+
+// Duration is a stub so that go/types can resolve metav1.Duration.
+// Real validation is injected by controller-tools KnownPackages.
+type Duration struct{}
+type Time struct{}
+type MicroTime struct{}
+type Fields map[string]interface{}
 `
+
 	stubPath := filepath.Join(stubModuleDir, "pkg/apis/meta/v1/doc.go")
 	if err := os.WriteFile(stubPath, []byte(stubCode), 0o644); err != nil {
+		return "", "", err
+	}
+
+	/* ---------- stub k8s.io/apimachinery/pkg/api/resource ---------- */
+
+	resDir := filepath.Join(stubModuleDir, "pkg/api/resource")
+	if err := os.MkdirAll(resDir, 0o755); err != nil {
+		return "", "", err
+	}
+	stubQty := `package resource
+type Quantity struct{}
+`
+	if err := os.WriteFile(filepath.Join(resDir, "doc.go"), []byte(stubQty), 0o644); err != nil {
+		return "", "", err
+	}
+
+	/* ---------- stub k8s.io/apimachinery/pkg/util/intstr ---------- */
+
+	intstrDir := filepath.Join(stubModuleDir, "pkg/util/intstr")
+	if err := os.MkdirAll(intstrDir, 0o755); err != nil {
+		return "", "", err
+	}
+	stubIS := `package intstr
+type IntOrString struct{}
+`
+	if err := os.WriteFile(filepath.Join(intstrDir, "doc.go"), []byte(stubIS), 0o644); err != nil {
 		return "", "", err
 	}
 
