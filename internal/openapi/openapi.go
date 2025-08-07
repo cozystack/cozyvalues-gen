@@ -315,8 +315,8 @@ func (g *gen) resolve(raw string) string {
 		g.addImpAlias("k8s.io/apimachinery/pkg/apis/meta/v1", "metav1")
 		return "metav1.Time"
 	case aliasObject:
-		g.addImpAlias("k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1", "apiextv1")
-		return "apiextv1.JSON"
+		g.addImpAlias("k8s.io/apimachinery/pkg/runtime", "k8sRuntime")
+		return "k8sRuntime.RawExtension"
 	case aliasEmptyObject:
 		return camel(aliasEmptyObject)
 	}
@@ -448,6 +448,10 @@ func (g *gen) emitField(c *Node) {
 }
 
 func (g *gen) Generate(root *Node) ([]byte, []byte, error) {
+	// abort if some referenced types were never declared
+	if undef := CollectUndefined(root); len(undef) > 0 {
+		return nil, nil, fmt.Errorf("undefined types: %s", strings.Join(undef, ", "))
+	}
 	g.buf.WriteString("// +kubebuilder:object:generate=true\n")
 	g.buf.WriteString("// +kubebuilder:object:root=true\n")
 	g.buf.WriteString("// +groupName=values.helm.io\n\n")
@@ -593,16 +597,14 @@ type IntOrString struct{}
 	}
 
 	/* --------- stub for apiextensions-apiserver/pkg/apis/apiextensions/v1 --- */
-
-	apiextDir := filepath.Join(stubModuleDir, "pkg/apis/apiextensions/v1")
-	if err := os.MkdirAll(apiextDir, 0o755); err != nil {
+	rtDir := filepath.Join(stubModuleDir, "pkg/runtime")
+	if err := os.MkdirAll(rtDir, 0o755); err != nil {
 		return "", "", err
 	}
-	stubJSON := `package v1
-type JSON struct{}
+	stubRE := `package runtime
+type RawExtension struct{}
 `
-	if err := os.WriteFile(filepath.Join(apiextDir, "doc.go"),
-		[]byte(stubJSON), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(rtDir, "doc.go"), []byte(stubRE), 0o644); err != nil {
 		return "", "", err
 	}
 

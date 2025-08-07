@@ -145,6 +145,7 @@ metricsStorages:
 
 func TestComplexNestedTypes(t *testing.T) {
 	yamlContent := `
+## @field emptyDir.placeholder {string}  # declare alias, no real fields
 ## @param metricsStorages {[]metricsStorage} Metrics storage
 ## @field metricsStorage.name {string} Name
 ## @field metricsStorage.retentionPeriod {string default="5m"} Retention
@@ -434,6 +435,7 @@ foaao:
 
 func TestObjectAliases(t *testing.T) {
 	const yaml = `
+## @field emptyobject.placeholder {string}  # declare alias, no real fields
 ## @param rawData {object} arbitrary JSON
 rawData: {}
 
@@ -448,17 +450,63 @@ cfg: {}
 	require.NoError(t, err)
 	code := string(src)
 
+	// Emptyobject → named struct
 	require.Contains(t, code, "type Emptyobject struct {")
 	require.Contains(t, code, "Emptyobject `json:\"cfg\"`")
 
-	require.Contains(t, code, "apiextv1.JSON `json:\"rawData\"`")
-	require.Contains(t, code,
-		"apiextv1 \"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1\"")
+	// object → k8sRuntime.RawExtension
+	require.Contains(t, code, "k8sRuntime.RawExtension `json:\"rawData\"`",
+		"object alias not resolved")
+
+	// ----- build CRD & JSON-schema ----------------------------------
 
 	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	_, err = CG(filepath.Dir(goFile))
+	crdBytes, err := CG(filepath.Dir(goFile))
 	require.NoError(t, err)
+
+	schemaPath := filepath.Join(tmpDir, "values.schema.json")
+	require.NoError(t, WriteValuesSchema(crdBytes, schemaPath))
+
+	raw, err := os.ReadFile(schemaPath)
+	require.NoError(t, err)
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(raw, &schema))
+
+	// .properties.rawData.x-kubernetes-preserve-unknown-fields must be true
+	props := schema["properties"].(map[string]any)
+	rawData := props["rawData"].(map[string]any)
+	require.Equal(t, true, rawData["x-kubernetes-preserve-unknown-fields"],
+		"`object` alias should preserve unknown fields")
+}
+
+func TestUndefinedTypeReference(t *testing.T) {
+	const yaml = `
+## @param foo {Bar} reference to undeclared type
+foo: {}
+`
+	rows, _ := Parse(writeTempFile(yaml))
+	root := Build(rows)
+
+	_, _, err := (&gen{pkg: "values"}).Generate(root)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Bar")
+}
+
+func TestDefinedTypeNoError(t *testing.T) {
+	const yaml = `
+## @param foo {Bar}
+foo: {}
+## @field Bar.baz {string}
+`
+	rows, err := Parse(writeTempFile(yaml))
+	require.NoError(t, err)
+	root := Build(rows)
+
+	g := &gen{pkg: "values"}
+	_, _, err = g.Generate(root)
+
+	require.NoError(t, err, "type Bar is declared, should not error")
 }
