@@ -241,7 +241,7 @@ func combine(vals map[string]interface{}) { valuesMap = vals }
 
 // ---------------------------------------------------------------------------
 //
-//	BuildParam list that ends up in the README table
+//	BuildParamsToRender – table rows for README
 //
 // ---------------------------------------------------------------------------
 func buildParamsToRender(params []ParamMeta) []ParamToRender {
@@ -249,26 +249,23 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 
 	for _, pm := range params {
 		baseType := deriveTypeName(pm.TypeOriginal)
+
 		isArray := strings.HasPrefix(pm.TypeOriginal, "[]")
 		isMap := strings.HasPrefix(pm.TypeOriginal, "map[")
 		isPtr := strings.HasPrefix(pm.TypeOriginal, "*")
 
-		isArrayPrimitive := isArray && isPrimitive(baseType)
-		isPtrPrimitive := isPtr && isPrimitive(baseType)
+		isArrayPrim := isArray && isPrimitive(baseType)
+		isPtrPrim := isPtr && isPrimitive(baseType)
 
 		val := defaultValueForType(pm.TypeOriginal)
 
 		switch {
-		// ------------------------------------------------------------------
-		//  1. array of primitives → print concrete list (`[1,2]` …)
-		// ------------------------------------------------------------------
-		case isArrayPrimitive:
+		// 1. array of primitives ─ concrete list
+		case isArrayPrim:
 			raw, exists := valuesMap[pm.Name]
 			val = valueString(raw, exists, pm.TypeOriginal)
 
-		// ------------------------------------------------------------------
-		//  2. array of objects → [] / [...]
-		// ------------------------------------------------------------------
+		// 2. array of objects ─ [] / [...]
 		case isArray:
 			raw, ok := valuesMap[pm.Name].([]interface{})
 			if ok && len(raw) > 0 {
@@ -277,9 +274,7 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 				val = "`[]`"
 			}
 
-		// ------------------------------------------------------------------
-		//  3. map of objects
-		// ------------------------------------------------------------------
+		// 3. map[string]object ─ {} / {...}
 		case isMap:
 			if !isPrimitive(baseType) && len(typeFields[baseType]) > 0 {
 				val = "`{...}`"
@@ -287,22 +282,24 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 				val = "`{}`"
 			}
 
-		// ------------------------------------------------------------------
-		//  4. pointer to primitive → valueString(nil→null/actual value)
-		// ------------------------------------------------------------------
-		case isPtrPrimitive:
+		// 4. pointer to primitive ─ null / concrete
+		case isPtrPrim:
 			raw, exists := valuesMap[pm.Name]
 			val = valueString(raw, exists, pm.TypeOriginal)
 
-		// ------------------------------------------------------------------
-		//  5. object (has fields) or pointer-to-object → {}
-		// ------------------------------------------------------------------
-		case (!isPrimitive(baseType) && len(typeFields[baseType]) > 0) || (isPtr && !isPtrPrimitive):
+		// 5. pointer to **object** ─ null / {}
+		case isPtr && !isPtrPrim:
+			if _, exists := valuesMap[pm.Name]; exists {
+				val = "`{}`"
+			} else {
+				val = "`null`"
+			}
+
+		// 6. plain object with fields ─ {}
+		case !isPrimitive(baseType) && len(typeFields[baseType]) > 0:
 			val = "`{}`"
 
-		// ------------------------------------------------------------------
-		//  6. plain primitive
-		// ------------------------------------------------------------------
+		// 7. plain primitive
 		default:
 			raw, exists := valuesMap[pm.Name]
 			val = valueString(raw, exists, pm.TypeOriginal)
@@ -656,13 +653,9 @@ func UpdateParametersSection(valuesPath, readmePath string) error {
 }
 
 func defaultValueForType(t string) string {
+	// every pointer (primitive *or* object) renders as null
 	if strings.HasPrefix(t, "*") {
-		base := strings.TrimPrefix(t, "*")
-		if isPrimitive(base) {
-			return "`null`"
-		}
-		// pointer to non-primitive → treat as empty object
-		return "`{}`"
+		return "`null`"
 	}
 
 	base := strings.TrimPrefix(t, "*")
@@ -672,7 +665,7 @@ func defaultValueForType(t string) string {
 		return "`[]`"
 	case strings.HasPrefix(base, "map["):
 		return "`{}`"
-	case base == "string", base == "quantity":
+	case base == "string", base == aliasQuantity:
 		return "`\"\"`"
 	case base == "int":
 		return "`0`"

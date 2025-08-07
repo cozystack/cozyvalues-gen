@@ -432,9 +432,8 @@ resources:
   memory: 1Gi
 `
 	table := renderTableFromValues(t, yaml)
-	if !strings.Contains(table, "`resources`") || !strings.Contains(table, "`{}`") {
-		t.Fatalf("pointer-to-object param should render `{}`, got:\n%s", table)
-	}
+	require.Contains(t, table, "`resources`")
+	require.Contains(t, table, "`{}`", "pointer-to-object param should render `{}`")
 }
 
 func TestParamWithoutDescription(t *testing.T) {
@@ -462,4 +461,17 @@ foaao:
 	table := renderTableFromValues(t, yaml)
 	require.Contains(t, table, "`foaao`")
 	require.Contains(t, table, "`{}`", "alias object should render {} not raw JSON")
+}
+
+func TestPointerObjectDefaultsToNull(t *testing.T) {
+	yaml := `
+## @param storages {[]storage} list
+## @field storage.name {string} name
+## @field storage.resources {*resources} nested ptr object
+storages:
+- name: s1
+`
+	table := renderTableFromValues(t, yaml)
+	require.Contains(t, table, "`storages[i].resources`")
+	require.Contains(t, table, "`null`", "missing pointer-to-object should render `null`")
 }
