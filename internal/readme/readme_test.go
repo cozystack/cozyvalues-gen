@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func writeTempFile(t *testing.T, content string) string {
@@ -139,12 +141,8 @@ postgresql: {}
 }
 
 func TestNormalizeQuantityTypes(t *testing.T) {
-	if normalizeType("quantity") != "string" {
-		t.Errorf("expected quantity to normalize to string")
-	}
-	if normalizeType("*quantity") != "*string" {
-		t.Errorf("expected *quantity to normalize to *string")
-	}
+	require.Equal(t, "quantity", normalizeType("quantity"))
+	require.Equal(t, "*quantity", normalizeType("*quantity"))
 }
 
 func TestStringEnumStripped(t *testing.T) {
@@ -402,4 +400,66 @@ alerta:
 	if !strings.Contains(table, "`alerta.alerts.telegram.disabledSeverity`") || !strings.Contains(table, "`warn`") {
 		t.Errorf("expected nested telegram disabledSeverity field with warn got:\n%s", table)
 	}
+}
+
+func TestNormalizeTypePrimitives(t *testing.T) {
+	cases := map[string]string{
+		"string":             "string",
+		"quantity":           "quantity",
+		"duration":           "duration",
+		"time":               "time",
+		"object":             "object",
+		"*quantity":          "*quantity",
+		"[]quantity":         "[]quantity",
+		"map[string]time":    "map[string]time",
+		"map[string]Unknown": "map[string]object", // non-primitive fallback
+	}
+
+	for in, want := range cases {
+		if got := normalizeType(in); got != want {
+			t.Fatalf("normalizeType(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestPointerObjectRendersAsEmptyObject(t *testing.T) {
+	yaml := `
+## @param resources {*resources} Resource configuration for etcd
+## @field resources.cpu {*quantity} CPU
+## @field resources.memory {*quantity} Memory
+resources:
+  cpu: 4
+  memory: 1Gi
+`
+	table := renderTableFromValues(t, yaml)
+	if !strings.Contains(table, "`resources`") || !strings.Contains(table, "`{}`") {
+		t.Fatalf("pointer-to-object param should render `{}`, got:\n%s", table)
+	}
+}
+
+func TestParamWithoutDescription(t *testing.T) {
+	yaml := `
+## @param foo {string}
+foo: ""
+`
+	path := writeTempFile(t, yaml)
+	defer os.Remove(path)
+
+	meta, err := parseMetadataComments(path)
+	require.NoError(t, err)
+	require.Len(t, meta.Sections, 1)
+	require.Equal(t, "foo", meta.Sections[0].Parameters[0].Name)
+	require.Equal(t, "", meta.Sections[0].Parameters[0].Description)
+}
+
+func TestAliasObjectDisplaysEmptyBraces(t *testing.T) {
+	yaml := `
+## @param foaao {asdaa}
+## @field foaao.foaa {int64} some field
+foaao:
+  aaa: 1
+`
+	table := renderTableFromValues(t, yaml)
+	require.Contains(t, table, "`foaao`")
+	require.Contains(t, table, "`{}`", "alias object should render {} not raw JSON")
 }

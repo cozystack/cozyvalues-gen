@@ -11,6 +11,50 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	aliasQuantity    = "quantity"
+	aliasDuration    = "duration"
+	aliasTime        = "time"
+	aliasObject      = "object"
+	aliasEmptyObject = "emptyobject"
+)
+
+// additional string-format aliases
+// see https://github.com/go-openapi/strfmt/blob/master/README.md
+var stringFormats = []string{
+	"bsonobjectid",
+	"uri",
+	"email",
+	"hostname",
+	"ipv4",
+	"ipv6",
+	"cidr",
+	"mac",
+	"uuid",
+	"uuid3",
+	"uuid4",
+	"uuid5",
+	"isbn",
+	"isbn10",
+	"isbn13",
+	"creditcard",
+	"ssn",
+	"hexcolor",
+	"rgbcolor",
+	"byte",
+	"password",
+	"date",
+}
+
+func isStringFormat(s string) bool {
+	for _, f := range stringFormats {
+		if s == f {
+			return true
+		}
+	}
+	return false
+}
+
 type Config struct{}
 
 type Meta struct {
@@ -75,12 +119,14 @@ func parseMetadataComments(path string) (*Meta, error) {
 	typeFields = make(map[string][]FieldMeta)
 	var sections []*Section
 	var current *Section
+	var allParams []ParamMeta
 
 	sectionRe := regexp.MustCompile(`^#{1,}\s+@section\s+(.*)$`)
-	paramRe := regexp.MustCompile(`^#{1,}\s+@param\s+(\w+)\s+\{([^}]+)\}\s+(.*)$`)
+	// description part is optional
+	paramRe := regexp.MustCompile(`^#{1,}\s+@param\s+(\w+)\s+\{([^}]+)\}(?:\s+(.*))?$`)
 	fieldRe := regexp.MustCompile(`^#{1,}\s+@field\s+([\w\.]+)\s+\{([^}]+)\}\s*(.*)$`)
 
-	// First pass: extract all @section, @param, @field from comments
+	// ───────────── first pass: @section & @param ─────────────
 	lines := strings.Split(string(data), "\n")
 	for _, line := range lines {
 		if m := sectionRe.FindStringSubmatch(line); m != nil {
@@ -90,9 +136,18 @@ func parseMetadataComments(path string) (*Meta, error) {
 			continue
 		}
 		if m := paramRe.FindStringSubmatch(line); m != nil {
-			name, typ, desc := m[1], m[2], m[3]
-			typeName := resolveTypeName(typ)
-			pm := ParamMeta{Name: name, TypeOriginal: typ, TypeName: typeName, Description: desc}
+			name, typ := m[1], m[2]
+			desc := ""
+			if len(m) > 3 {
+				desc = m[3]
+			}
+			pm := ParamMeta{
+				Name:         name,
+				TypeOriginal: typ,
+				TypeName:     resolveTypeName(typ),
+				Description:  desc,
+			}
+			allParams = append(allParams, pm)
 			if current != nil {
 				current.Parameters = append(current.Parameters, pm)
 			} else {
@@ -104,45 +159,47 @@ func parseMetadataComments(path string) (*Meta, error) {
 		}
 	}
 
-	// Second pass: parse tree and collect inline @field annotations
+	// build param-name → type alias map
+	aliasMap := buildAliasMap(allParams)
+
+	// ───────────── second pass: traverse YAML & @field ─────────────
 	var walk func(node *yaml.Node, path []string)
 	walk = func(node *yaml.Node, path []string) {
-		if node.Kind == yaml.MappingNode {
-			for i := 0; i < len(node.Content); i += 2 {
-				key := node.Content[i]
-				val := node.Content[i+1]
-				name := key.Value
+		if node.Kind != yaml.MappingNode {
+			return
+		}
+		for i := 0; i < len(node.Content); i += 2 {
+			key := node.Content[i]
+			val := node.Content[i+1]
+			name := key.Value
 
-				// Look for comment with @field on this key node
-				comments := key.HeadComment + "\n" + key.LineComment + "\n" + key.FootComment
-				for _, line := range strings.Split(comments, "\n") {
-					if m := fieldRe.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
-						qual := m[1]
-						typ := m[2]
-						desc := m[3]
+			comments := key.HeadComment + "\n" + key.LineComment + "\n" + key.FootComment
+			for _, line := range strings.Split(comments, "\n") {
+				if m := fieldRe.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+					qual := m[1]
+					typ := m[2]
+					desc := m[3]
 
-						// allow both relative and full form
-						var rootType, field string
-						if strings.Contains(qual, ".") {
-							parts := strings.SplitN(qual, ".", 2)
-							rootType, field = parts[0], parts[1]
-						} else {
-							rootType = qual
-							field = ""
-						}
-						typeFields[rootType] = append(typeFields[rootType], FieldMeta{
-							ParentTypeName: rootType,
-							Name:           field,
-							Type:           typ,
-							Description:    desc,
-						})
+					rootType, field := qual, ""
+					if strings.Contains(qual, ".") {
+						parts := strings.SplitN(qual, ".", 2)
+						rootType, field = parts[0], parts[1]
 					}
-				}
+					// resolve via alias map (foo → FooType)
+					if real, ok := aliasMap[rootType]; ok {
+						rootType = real
+					}
 
-				// Recurse into next value
-				if val.Kind == yaml.MappingNode {
-					walk(val, append(path, name))
+					typeFields[rootType] = append(typeFields[rootType], FieldMeta{
+						ParentTypeName: rootType,
+						Name:           field,
+						Type:           typ,
+						Description:    desc,
+					})
 				}
+			}
+			if val.Kind == yaml.MappingNode {
+				walk(val, append(path, name))
 			}
 		}
 	}
@@ -172,49 +229,89 @@ func resolveTypeName(typ string) string {
 	return typ
 }
 
-func buildAliasMap(params []ParamMeta) map[string]string { return map[string]string{} }
+func buildAliasMap(params []ParamMeta) map[string]string {
+	out := make(map[string]string)
+	for _, p := range params {
+		out[p.Name] = p.TypeName
+	}
+	return out
+}
 
 func combine(vals map[string]interface{}) { valuesMap = vals }
 
+// ---------------------------------------------------------------------------
+//
+//	BuildParam list that ends up in the README table
+//
+// ---------------------------------------------------------------------------
 func buildParamsToRender(params []ParamMeta) []ParamToRender {
 	var out []ParamToRender
-	for _, pm := range params {
-		typDisplay := normalizeType(pm.TypeOriginal)
-		val := defaultValueForType(pm.TypeOriginal)
-		baseType := deriveTypeName(pm.TypeOriginal)
 
-		// Arrays of objects
-		if strings.HasPrefix(pm.TypeOriginal, "[]") && !isPrimitive(baseType) {
-			if len(typeFields[baseType]) > 0 {
-				raw, ok := valuesMap[pm.Name].([]interface{})
-				if !ok || len(raw) == 0 {
-					val = "`[]`"
-				} else {
-					val = "`[...]`"
-				}
+	for _, pm := range params {
+		baseType := deriveTypeName(pm.TypeOriginal)
+		isArray := strings.HasPrefix(pm.TypeOriginal, "[]")
+		isMap := strings.HasPrefix(pm.TypeOriginal, "map[")
+		isPtr := strings.HasPrefix(pm.TypeOriginal, "*")
+
+		isArrayPrimitive := isArray && isPrimitive(baseType)
+		isPtrPrimitive := isPtr && isPrimitive(baseType)
+
+		val := defaultValueForType(pm.TypeOriginal)
+
+		switch {
+		// ------------------------------------------------------------------
+		//  1. array of primitives → print concrete list (`[1,2]` …)
+		// ------------------------------------------------------------------
+		case isArrayPrimitive:
+			raw, exists := valuesMap[pm.Name]
+			val = valueString(raw, exists, pm.TypeOriginal)
+
+		// ------------------------------------------------------------------
+		//  2. array of objects → [] / [...]
+		// ------------------------------------------------------------------
+		case isArray:
+			raw, ok := valuesMap[pm.Name].([]interface{})
+			if ok && len(raw) > 0 {
+				val = "`[...]`"
+			} else {
+				val = "`[]`"
 			}
-			// Maps of objects → use {...} when fields are defined
-		} else if strings.HasPrefix(pm.TypeOriginal, "map[") && !isPrimitive(baseType) {
-			if len(typeFields[baseType]) > 0 {
+
+		// ------------------------------------------------------------------
+		//  3. map of objects
+		// ------------------------------------------------------------------
+		case isMap:
+			if !isPrimitive(baseType) && len(typeFields[baseType]) > 0 {
 				val = "`{...}`"
 			} else {
 				val = "`{}`"
 			}
-			// Plain objects → always {}
-		} else if !isPrimitive(baseType) && len(typeFields[baseType]) > 0 {
-			val = "`{}`"
-		}
 
-		// Primitives
-		if isPrimitive(pm.TypeOriginal) || strings.HasPrefix(pm.TypeOriginal, "*") || strings.Contains(pm.TypeOriginal, "quantity") || (strings.HasPrefix(pm.TypeOriginal, "[]") && isPrimitive(pm.TypeName)) {
-			rawVal, exists := valuesMap[pm.Name]
-			val = valueString(rawVal, exists, pm.TypeOriginal)
+		// ------------------------------------------------------------------
+		//  4. pointer to primitive → valueString(nil→null/actual value)
+		// ------------------------------------------------------------------
+		case isPtrPrimitive:
+			raw, exists := valuesMap[pm.Name]
+			val = valueString(raw, exists, pm.TypeOriginal)
+
+		// ------------------------------------------------------------------
+		//  5. object (has fields) or pointer-to-object → {}
+		// ------------------------------------------------------------------
+		case (!isPrimitive(baseType) && len(typeFields[baseType]) > 0) || (isPtr && !isPtrPrimitive):
+			val = "`{}`"
+
+		// ------------------------------------------------------------------
+		//  6. plain primitive
+		// ------------------------------------------------------------------
+		default:
+			raw, exists := valuesMap[pm.Name]
+			val = valueString(raw, exists, pm.TypeOriginal)
 		}
 
 		out = append(out, ParamToRender{
 			Path:        pm.Name,
 			Description: pm.Description,
-			Type:        typDisplay,
+			Type:        normalizeType(pm.TypeOriginal),
 			Value:       val,
 		})
 		out = append(out, traverseParam(pm, valuesMap[pm.Name], true)...)
@@ -312,12 +409,10 @@ func normalizeType(t string) string {
 		t = t[:idx]
 	}
 
-	// quantity → string
-	if strings.HasSuffix(t, "quantity") {
-		if strings.HasPrefix(t, "*") {
-			return "*string"
-		}
-		return "string"
+	// if underlying base is primitive, preserve it verbatim
+	base := deriveTypeName(t)
+	if isPrimitive(base) {
+		return t
 	}
 
 	// Handle array types
@@ -395,11 +490,17 @@ func valueString(raw interface{}, exists bool, t string) string {
 
 func isPrimitive(t string) bool {
 	base := strings.TrimPrefix(t, "*")
-	switch base {
-	case "string", "int", "bool", "float64":
+	if isStringFormat(base) {
 		return true
 	}
-	return false
+	switch base {
+	case "string", "bool", "int", "int32", "int64",
+		"float32", "float64",
+		aliasQuantity, aliasDuration, aliasTime, aliasObject:
+		return true
+	default:
+		return false
+	}
 }
 
 func markdownTable(rows []ParamToRender) string {
@@ -556,7 +657,12 @@ func UpdateParametersSection(valuesPath, readmePath string) error {
 
 func defaultValueForType(t string) string {
 	if strings.HasPrefix(t, "*") {
-		return "`null`"
+		base := strings.TrimPrefix(t, "*")
+		if isPrimitive(base) {
+			return "`null`"
+		}
+		// pointer to non-primitive → treat as empty object
+		return "`{}`"
 	}
 
 	base := strings.TrimPrefix(t, "*")
@@ -566,7 +672,7 @@ func defaultValueForType(t string) string {
 		return "`[]`"
 	case strings.HasPrefix(base, "map["):
 		return "`{}`"
-	case base == "string" || base == "quantity":
+	case base == "string", base == "quantity":
 		return "`\"\"`"
 	case base == "int":
 		return "`0`"
