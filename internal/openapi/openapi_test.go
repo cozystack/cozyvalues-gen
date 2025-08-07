@@ -353,9 +353,9 @@ apiURL: ""
 func TestResolveSpecialAliases(t *testing.T) {
 	g := &gen{pkg: "values"}
 
-	require.Equal(t, "v1.Duration", g.resolve("duration"))
+	require.Equal(t, "metav1.Duration", g.resolve("duration"))
 	require.Equal(t, "resource.Quantity", g.resolve("quantity"))
-	require.Equal(t, "v1.Time", g.resolve("time"))
+	require.Equal(t, "metav1.Time", g.resolve("time"))
 
 	// ensure imports were recorded
 	require.Contains(t, g.imp, "k8s.io/apimachinery/pkg/apis/meta/v1")
@@ -430,4 +430,35 @@ foaao:
 	require.Equal(t, 1, structs["Asdaa"], "Asdaa should have one field")
 	require.Contains(t, extractTypeRefs(string(code)), "Asdaa",
 		"ConfigSpec must reference Asdaa")
+}
+
+func TestObjectAliases(t *testing.T) {
+	const yaml = `
+## @param rawData {object} arbitrary JSON
+rawData: {}
+
+## @param cfg {emptyobject} nothing inside
+cfg: {}
+`
+	rows, _ := Parse(writeTempFile(yaml))
+	root := Build(rows)
+
+	g := &gen{pkg: "values"}
+	src, _, err := g.Generate(root)
+	require.NoError(t, err)
+	code := string(src)
+
+	require.Contains(t, code, "type Emptyobject struct {")
+	require.Contains(t, code, "Emptyobject `json:\"cfg\"`")
+
+	require.Contains(t, code, "apiextv1.JSON `json:\"rawData\"`")
+	require.Contains(t, code,
+		"apiextv1 \"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1\"")
+
+	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	_, err = CG(filepath.Dir(goFile))
+	require.NoError(t, err)
 }

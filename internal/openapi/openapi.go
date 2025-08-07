@@ -32,6 +32,14 @@ const (
 	kField
 )
 
+const (
+	aliasQuantity    = "quantity"
+	aliasDuration    = "duration"
+	aliasTime        = "time"
+	aliasObject      = "object"
+	aliasEmptyObject = "emptyobject"
+)
+
 type Raw struct {
 	K           kind
 	Path        []string
@@ -241,15 +249,19 @@ func Build(rows []Raw) *Node {
 type gen struct {
 	pkg string
 	buf bytes.Buffer
-	imp map[string]struct{}
+	imp map[string]string // path -> alias ("" for default)
 }
 
-func (g *gen) addImp(p string) {
+func (g *gen) addImpAlias(path, alias string) {
 	if g.imp == nil {
-		g.imp = map[string]struct{}{}
+		g.imp = map[string]string{}
 	}
-	g.imp[p] = struct{}{}
+	if _, ok := g.imp[path]; !ok {
+		g.imp[path] = alias
+	}
 }
+
+func (g *gen) addImp(path string) { g.addImpAlias(path, "") }
 
 func isPrimitive(t string) bool {
 	if isStringFormat(t) {
@@ -257,7 +269,8 @@ func isPrimitive(t string) bool {
 	}
 	switch t {
 	case "string", "bool", "int", "int32", "int64", "float32", "float64",
-		"quantity", "duration", "time":
+		aliasQuantity, aliasDuration, aliasTime,
+		aliasObject:
 		return true
 	default:
 		return false
@@ -291,19 +304,22 @@ func (g *gen) resolve(raw string) string {
 		return "string"
 	}
 
-	// --- alias section (runs before isPrimitive) ------------------- //
 	switch raw {
-	case "quantity":
-		g.addImp("k8s.io/apimachinery/pkg/api/resource")
+	case aliasQuantity:
+		g.addImpAlias("k8s.io/apimachinery/pkg/api/resource", "resource")
 		return "resource.Quantity"
-	case "duration":
-		g.addImp("k8s.io/apimachinery/pkg/apis/meta/v1")
-		return "v1.Duration"
-	case "time":
-		g.addImp("k8s.io/apimachinery/pkg/apis/meta/v1")
-		return "v1.Time"
+	case aliasDuration:
+		g.addImpAlias("k8s.io/apimachinery/pkg/apis/meta/v1", "metav1")
+		return "metav1.Duration"
+	case aliasTime:
+		g.addImpAlias("k8s.io/apimachinery/pkg/apis/meta/v1", "metav1")
+		return "metav1.Time"
+	case aliasObject:
+		g.addImpAlias("k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1", "apiextv1")
+		return "apiextv1.JSON"
+	case aliasEmptyObject:
+		return camel(aliasEmptyObject)
 	}
-	// ---------------------------------------------------------------- //
 
 	if isPrimitive(raw) || raw == "any" {
 		return raw
@@ -312,7 +328,7 @@ func (g *gen) resolve(raw string) string {
 		return raw
 	}
 	if idx := strings.LastIndex(raw, "."); idx != -1 {
-		g.addImp(raw[:idx])
+		g.addImpAlias(raw[:idx], "")
 		return raw[idx+1:]
 	}
 	return camel(raw)
@@ -445,11 +461,14 @@ func (g *gen) Generate(root *Node) ([]byte, []byte, error) {
 	if len(g.imp) > 0 {
 		var imp bytes.Buffer
 		imp.WriteString("import (\n")
-		for _, k := range sortedKeys(g.imp) {
-			imp.WriteString("    \"" + k + "\"\n")
+		for _, p := range sortedKeys(g.imp) {
+			if a := g.imp[p]; a != "" {
+				imp.WriteString("    " + a + " \"" + p + "\"\n")
+			} else {
+				imp.WriteString("    \"" + p + "\"\n")
+			}
 		}
 		imp.WriteString(")\n\n")
-
 		head := "package " + g.pkg + "\n\n"
 		src = g.buf.Bytes()
 		src = []byte(strings.Replace(string(src), head, head+imp.String(), 1))
@@ -570,6 +589,20 @@ type Quantity struct{}
 type IntOrString struct{}
 `
 	if err := os.WriteFile(filepath.Join(intstrDir, "doc.go"), []byte(stubIS), 0o644); err != nil {
+		return "", "", err
+	}
+
+	/* --------- stub for apiextensions-apiserver/pkg/apis/apiextensions/v1 --- */
+
+	apiextDir := filepath.Join(stubModuleDir, "pkg/apis/apiextensions/v1")
+	if err := os.MkdirAll(apiextDir, 0o755); err != nil {
+		return "", "", err
+	}
+	stubJSON := `package v1
+type JSON struct{}
+`
+	if err := os.WriteFile(filepath.Join(apiextDir, "doc.go"),
+		[]byte(stubJSON), 0o644); err != nil {
 		return "", "", err
 	}
 
@@ -749,6 +782,11 @@ func toGoLiteral(v interface{}) string {
 
 func formatDefault(val, typ string) string {
 	t := strings.TrimPrefix(typ, "*")
+
+	// no +kubebuilder:default for empty objects
+	if t == camel(aliasEmptyObject) {
+		return ""
+	}
 	if t == "string" || t == "quantity" {
 		return fmt.Sprintf("%q", val)
 	}
