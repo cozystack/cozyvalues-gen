@@ -162,6 +162,43 @@ func parseMetadataComments(path string) (*Meta, error) {
 	// build param-name → type alias map
 	aliasMap := buildAliasMap(allParams)
 
+	seen := map[fieldKey]struct{}{}
+	addField := func(parent, name, typ, desc string) {
+		if parent == "" || name == "" {
+			return
+		}
+		if real, ok := aliasMap[parent]; ok {
+			parent = real
+		}
+		k := fieldKey{parent: parent, name: name}
+		if _, dup := seen[k]; dup {
+			return
+		}
+		typeFields[parent] = append(typeFields[parent], FieldMeta{
+			ParentTypeName: parent,
+			Name:           name,
+			Type:           typ,
+			Description:    desc,
+		})
+		seen[k] = struct{}{}
+	}
+
+	// collect from raw lines
+	for _, line := range lines {
+		if m := fieldRe.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+			qual := m[1]
+			typ := m[2]
+			desc := m[3]
+
+			rootType, field := qual, ""
+			if strings.Contains(qual, ".") {
+				parts := strings.SplitN(qual, ".", 2)
+				rootType, field = parts[0], parts[1]
+			}
+			addField(rootType, field, typ, desc)
+		}
+	}
+
 	// ───────────── second pass: traverse YAML & @field ─────────────
 	var walk func(node *yaml.Node, path []string)
 	walk = func(node *yaml.Node, path []string) {
@@ -406,9 +443,22 @@ func normalizeType(t string) string {
 		t = t[:idx]
 	}
 
-	// if underlying base is primitive, preserve it verbatim
+	// normalize emptyobject for display
+	if t == aliasEmptyObject {
+		return "object"
+	}
+	if t == "*"+aliasEmptyObject {
+		return "*object"
+	}
+
+	// if underlying base is primitive, preserve it verbatim (after emptyobject normalization above)
 	base := deriveTypeName(t)
 	if isPrimitive(base) {
+		// show emptyobject as object in composite forms too
+		if base == aliasEmptyObject {
+			// handle map/array already below; for bare it's handled above
+			return strings.ReplaceAll(t, aliasEmptyObject, "object")
+		}
 		return t
 	}
 
@@ -418,11 +468,19 @@ func normalizeType(t string) string {
 		if !isPrimitive(base) {
 			return "[]object"
 		}
+		// []emptyobject -> []object
+		if base == aliasEmptyObject {
+			return "[]object"
+		}
 		return "[]" + base
 	}
 
 	// Handle map types
 	if strings.HasPrefix(t, "map[") {
+		// map[string]emptyobject -> map[string]object
+		if deriveTypeName(t) == aliasEmptyObject {
+			return "map[string]object"
+		}
 		return "map[string]object"
 	}
 
@@ -431,13 +489,13 @@ func normalizeType(t string) string {
 		if !isPrimitive(base) && !strings.HasPrefix(base, "[]") && !strings.HasPrefix(base, "map[") {
 			return "*object"
 		}
+		// *emptyobject already handled above
 		return t
 	}
 
 	if !isPrimitive(t) && !strings.HasPrefix(t, "[]") && !strings.HasPrefix(t, "map[") {
 		return "object"
 	}
-
 	return t
 }
 
@@ -485,6 +543,11 @@ func valueString(raw interface{}, exists bool, t string) string {
 	}
 }
 
+type fieldKey struct {
+	parent string
+	name   string
+}
+
 func isPrimitive(t string) bool {
 	base := strings.TrimPrefix(t, "*")
 	if isStringFormat(base) {
@@ -493,7 +556,7 @@ func isPrimitive(t string) bool {
 	switch base {
 	case "string", "bool", "int", "int32", "int64",
 		"float32", "float64",
-		aliasQuantity, aliasDuration, aliasTime, aliasObject:
+		aliasQuantity, aliasDuration, aliasTime, aliasObject, aliasEmptyObject:
 		return true
 	default:
 		return false

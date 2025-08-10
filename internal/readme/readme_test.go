@@ -582,3 +582,52 @@ config:
 
 	require.NoError(t, validateValues(params, typeFields, vals))
 }
+
+func TestSourceUploadSchemaFromTopBlock(t *testing.T) {
+	yamlContent := `
+## @section Common parameters
+## @param source {source} The source image location used to create a disk
+## @field source.image {*uploadImage} Use image by name
+## @field uploadImage.name {string} Name of the image to use
+## @field source.upload {*emptyobject} Upload local image
+## @field source.http {*uploadHTTP} Download image from an HTTP source
+## @field uploadHTTP.url {string} URL to download the image
+
+source: {}
+
+## @param optical {bool} Defines if disk should be considered optical
+optical: false
+
+## @param storage {quantity} The size of the disk allocated for the virtual machine
+## @param storageClass {string} StorageClass used to store the data
+storage: 5Gi
+storageClass: replicated
+`
+	path := writeTempFile(t, yamlContent)
+	defer os.Remove(path)
+
+	vals, err := createValuesObject(path)
+	require.NoError(t, err)
+
+	meta, err := parseMetadataComments(path)
+	require.NoError(t, err)
+
+	var params []ParamMeta
+	for _, s := range meta.Sections {
+		params = append(params, s.Parameters...)
+	}
+
+	// validate should pass: 'source' type schema is known
+	require.NoError(t, validateValues(params, typeFields, vals))
+
+	// rendered table should show object for emptyobject and nested fields
+	table := renderTableFromValues(t, yamlContent)
+	require.Contains(t, table, "`source`")
+	require.Contains(t, table, "`{}`")
+	require.Contains(t, table, "`source.image`")
+	require.Contains(t, table, "`source.upload`") // emptyobject displayed as object
+	require.Contains(t, table, "`source.http`")
+	// normalizeType for emptyobject
+	require.NotContains(t, table, "`emptyobject`")
+	require.Contains(t, table, "`object`")
+}
