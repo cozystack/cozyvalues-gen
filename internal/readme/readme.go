@@ -574,8 +574,7 @@ func validateValues(params []ParamMeta, typeFields map[string][]FieldMeta, value
 		}
 
 		if strings.HasPrefix(typ, "*") {
-			base := strings.TrimPrefix(typ, "*")
-			return checkValue(path, val, base)
+			return checkValue(path, val, strings.TrimPrefix(typ, "*"))
 		}
 
 		base := deriveTypeName(typ)
@@ -586,7 +585,7 @@ func validateValues(params []ParamMeta, typeFields map[string][]FieldMeta, value
 
 		fields, has := typeFields[base]
 		if !has {
-			return nil
+			return fmt.Errorf("type '%s' referenced at '%s' has no schema", base, path)
 		}
 
 		valMap, ok := val.(map[string]interface{})

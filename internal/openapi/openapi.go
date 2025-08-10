@@ -106,7 +106,8 @@ func Parse(file string) ([]Raw, error) {
 	attrRe := regexp.MustCompile(`(\w+)\s*(?:=|:)"([^"]*)"`)
 
 	for i := 0; i < len(lines); i++ {
-		m := re.FindStringSubmatch(lines[i])
+		line := strings.TrimSpace(lines[i])
+		m := re.FindStringSubmatch(line)
 		if m == nil {
 			continue
 		}
@@ -318,7 +319,11 @@ func (g *gen) resolve(raw string) string {
 		g.addImpAlias("k8s.io/apimachinery/pkg/runtime", "k8sRuntime")
 		return "k8sRuntime.RawExtension"
 	case aliasEmptyObject:
-		return camel(aliasEmptyObject)
+		c := camel(aliasEmptyObject)
+		if c == "Config" || c == "ConfigSpec" {
+			return "Values" + c
+		}
+		return c
 	}
 
 	if isPrimitive(raw) || raw == "any" {
@@ -329,16 +334,29 @@ func (g *gen) resolve(raw string) string {
 	}
 	if idx := strings.LastIndex(raw, "."); idx != -1 {
 		g.addImpAlias(raw[:idx], "")
-		return raw[idx+1:]
+		out := raw[idx+1:]
+		c := camel(out)
+		if c == "Config" || c == "ConfigSpec" {
+			return "Values" + c
+		}
+		return c
 	}
-	return camel(raw)
+	c := camel(raw)
+	if c == "Config" || c == "ConfigSpec" {
+		return "Values" + c
+	}
+	return c
 }
 
 func (g *gen) goType(n *Node) string {
 	raw := strings.TrimSpace(n.TypeExpr)
 	if raw == "" {
 		if len(n.Child) > 0 {
-			return camel(n.Name)
+			c := camel(n.Name)
+			if c == "Config" || c == "ConfigSpec" {
+				return "Values" + c
+			}
+			return c
 		}
 		return "string"
 	}
@@ -396,7 +414,6 @@ func (g *gen) writeStruct(n *Node) {
 		for _, c := range n.Child {
 			g.writeStruct(c)
 		}
-
 		return
 	}
 
@@ -404,7 +421,12 @@ func (g *gen) writeStruct(n *Node) {
 		return
 	}
 
-	g.buf.WriteString(fmt.Sprintf("type %s struct {\n", camel(n.Name)))
+	name := camel(n.Name)
+	if name == "Config" || name == "ConfigSpec" {
+		name = "Values" + name
+	}
+
+	g.buf.WriteString(fmt.Sprintf("type %s struct {\n", name))
 	keys := sortedKeys(n.Child)
 	for _, k := range keys {
 		g.emitField(n.Child[k])
@@ -800,15 +822,66 @@ func formatDefault(val, typ string) string {
 }
 
 func CollectUndefined(root *Node) []string {
-	var bad []string
-	for name, n := range root.Child {
-		if isPrimitive(strings.TrimPrefix(name, "*")) ||
-			strings.HasPrefix(name, "[]") ||
-			strings.HasPrefix(name, "map[") {
-			continue
+	defined := map[string]struct{}{}
+	referenced := map[string]struct{}{}
+
+	baseOf := func(expr string) string {
+		expr = strings.TrimSpace(expr)
+		if expr == "" {
+			return ""
 		}
-		if !n.IsParam && len(n.Child) == 0 {
-			bad = append(bad, name)
+		if strings.HasPrefix(expr, "*") {
+			expr = strings.TrimPrefix(expr, "*")
+		}
+		if strings.HasPrefix(expr, "[]") {
+			expr = strings.TrimSpace(expr[2:])
+			if strings.HasPrefix(expr, "*") {
+				expr = strings.TrimPrefix(expr, "*")
+			}
+		}
+		if strings.HasPrefix(expr, "map[") {
+			if i := strings.Index(expr, "]"); i != -1 {
+				expr = strings.TrimSpace(expr[i+1:])
+				if strings.HasPrefix(expr, "*") {
+					expr = strings.TrimPrefix(expr, "*")
+				}
+			}
+		}
+		return expr
+	}
+
+	var walk func(n *Node)
+	walk = func(n *Node) {
+		if n.Parent != nil {
+			name := n.Name
+			base := strings.TrimPrefix(name, "*")
+			if base != "" &&
+				base != aliasObject && base != aliasEmptyObject &&
+				!isPrimitive(base) &&
+				!strings.HasPrefix(base, "[]") &&
+				!strings.HasPrefix(base, "map[") &&
+				len(n.Child) > 0 {
+				defined[base] = struct{}{}
+			}
+		}
+		if b := baseOf(n.TypeExpr); b != "" {
+			if b != aliasObject && b != aliasEmptyObject &&
+				!isPrimitive(b) &&
+				!strings.HasPrefix(b, "[]") &&
+				!strings.HasPrefix(b, "map[") {
+				referenced[b] = struct{}{}
+			}
+		}
+		for _, c := range n.Child {
+			walk(c)
+		}
+	}
+	walk(root)
+
+	var bad []string
+	for t := range referenced {
+		if _, ok := defined[t]; !ok {
+			bad = append(bad, t)
 		}
 	}
 	sort.Strings(bad)

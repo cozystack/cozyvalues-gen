@@ -528,3 +528,57 @@ nodeGroups:
 	require.Contains(t, table, "`{...}`")
 	require.Contains(t, table, "`map[string]object`")
 }
+
+func TestUnknownComplexTypesAreRejected(t *testing.T) {
+	yamlContent := `
+## @param config {config} NATS configuration
+config:
+  ## @field config.merge {*merge} Additional config
+  merge: {}
+  ## @field config.resolver {resolver} Additional resolver config
+  resolver: {}
+`
+	path := writeTempFile(t, yamlContent)
+	defer os.Remove(path)
+
+	vals, err := createValuesObject(path)
+	require.NoError(t, err)
+
+	meta, err := parseMetadataComments(path)
+	require.NoError(t, err)
+
+	var params []ParamMeta
+	for _, s := range meta.Sections {
+		params = append(params, s.Parameters...)
+	}
+
+	err = validateValues(params, typeFields, vals)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "type 'merge' referenced at 'config.merge' has no schema")
+}
+
+func TestObjectAliasAllowsFreeForm(t *testing.T) {
+	yamlContent := `
+## @param config {config} NATS configuration
+config:
+  ## @field config.merge {object} Additional config
+  merge: {}
+  ## @field config.resolver {object} Additional resolver config
+  resolver: {}
+`
+	path := writeTempFile(t, yamlContent)
+	defer os.Remove(path)
+
+	vals, err := createValuesObject(path)
+	require.NoError(t, err)
+
+	meta, err := parseMetadataComments(path)
+	require.NoError(t, err)
+
+	var params []ParamMeta
+	for _, s := range meta.Sections {
+		params = append(params, s.Parameters...)
+	}
+
+	require.NoError(t, validateValues(params, typeFields, vals))
+}

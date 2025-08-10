@@ -510,3 +510,196 @@ foo: {}
 
 	require.NoError(t, err, "type Bar is declared, should not error")
 }
+
+func TestUnknownComplexTypesInFieldAreRejected(t *testing.T) {
+	const yaml = `
+## @param config {config}
+config:
+  ## @field config.merge {*merge}
+  merge: {}
+  ## @field config.resolver {resolver}
+  resolver: {}
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+	root := Build(rows)
+
+	_, _, err = (&gen{pkg: "values"}).Generate(root)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "merge")
+	require.Contains(t, err.Error(), "resolver")
+}
+
+func TestObjectFieldsAreAllowedFreeFormInOpenAPI(t *testing.T) {
+	const yaml = `
+## @param config {config}
+config:
+  ## @field config.merge {object}
+  merge: {}
+  ## @field config.resolver {object}
+  resolver: {}
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+	root := Build(rows)
+
+	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	crdBytes, err := CG(filepath.Dir(goFile))
+	require.NoError(t, err)
+
+	outSchema := filepath.Join(tmpDir, "values.schema.json")
+	require.NoError(t, WriteValuesSchema(crdBytes, outSchema))
+
+	raw, err := os.ReadFile(outSchema)
+	require.NoError(t, err)
+
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(raw, &schema))
+
+	props := schema["properties"].(map[string]any)
+	cfg, ok := props["config"].(map[string]any)
+	require.True(t, ok, "config property missing in schema")
+	cfgProps, ok := cfg["properties"].(map[string]any)
+	require.True(t, ok, "config.properties missing in schema")
+
+	for _, k := range []string{"merge", "resolver"} {
+		sub, ok := cfgProps[k].(map[string]any)
+		require.Truef(t, ok, "%s not found under config", k)
+		require.Equal(t, "object", sub["type"])
+		require.Equal(t, true, sub["x-kubernetes-preserve-unknown-fields"])
+	}
+}
+
+func TestMapStringUnknownValueTypeIsRejected(t *testing.T) {
+	const yaml = `
+## @param labels {map[string]label}
+labels:
+  app:
+    key: value
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+	root := Build(rows)
+
+	_, _, err = (&gen{pkg: "values"}).Generate(root)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "label")
+}
+
+func TestMapStringObjectIsAllowed(t *testing.T) {
+	const yaml = `
+## @param labels {map[string]object}
+labels:
+  app:
+    tier: web
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+	root := Build(rows)
+
+	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	crdBytes, err := CG(filepath.Dir(goFile))
+	require.NoError(t, err)
+
+	outSchema := filepath.Join(tmpDir, "values.schema.json")
+	require.NoError(t, WriteValuesSchema(crdBytes, outSchema))
+
+	raw, err := os.ReadFile(outSchema)
+	require.NoError(t, err)
+
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(raw, &schema))
+
+	props := schema["properties"].(map[string]any)
+	lbls := props["labels"].(map[string]any)
+	require.Equal(t, "object", lbls["type"])
+	addProps := lbls["additionalProperties"].(map[string]any)
+	require.Equal(t, true, addProps["x-kubernetes-preserve-unknown-fields"])
+}
+
+func TestUserTypeNamedConfigDoesNotClashAndMapStringObjectStillWorks(t *testing.T) {
+	const yaml = `
+## @param config {config}
+config:
+  ## @field config.merge {object}
+  merge: {}
+  ## @field config.resolver {object}
+  resolver: {}
+
+## @param labels {map[string]object}
+labels:
+  app:
+    tier: web
+`
+
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+	root := Build(rows)
+
+	// Generate code should not redefine kind "Config"
+	src, _, err := (&gen{pkg: "values"}).Generate(root)
+	require.NoError(t, err)
+	code := string(src)
+	require.Contains(t, code, "type ValuesConfig struct {", "user type 'config' must be sanitized to ValuesConfig")
+	require.Contains(t, code, "Config ValuesConfig", "ConfigSpec should have field named Config of type ValuesConfig")
+	require.Contains(t, code, "`json:\"config\"`", "ConfigSpec.Config should have json tag \"config\"")
+
+	// Build CRD → JSON schema
+	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	crdBytes, err := CG(filepath.Dir(goFile))
+	require.NoError(t, err)
+
+	outSchema := filepath.Join(tmpDir, "values.schema.json")
+	require.NoError(t, WriteValuesSchema(crdBytes, outSchema))
+
+	raw, err := os.ReadFile(outSchema)
+	require.NoError(t, err)
+
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(raw, &schema))
+	props := schema["properties"].(map[string]any)
+
+	// config is present with free-form subfields
+	cfg, ok := props["config"].(map[string]any)
+	require.True(t, ok, "config property missing")
+	cfgProps, ok := cfg["properties"].(map[string]any)
+	require.True(t, ok, "config.properties missing")
+	for _, k := range []string{"merge", "resolver"} {
+		sub, ok := cfgProps[k].(map[string]any)
+		require.Truef(t, ok, "%s missing under config", k)
+		require.Equal(t, "object", sub["type"])
+		require.Equal(t, true, sub["x-kubernetes-preserve-unknown-fields"])
+	}
+
+	// labels is map[string]object and should preserve unknown fields
+	lbls, ok := props["labels"].(map[string]any)
+	require.True(t, ok, "labels property missing")
+	require.Equal(t, "object", lbls["type"])
+	addProps, ok := lbls["additionalProperties"].(map[string]any)
+	require.True(t, ok, "labels.additionalProperties missing")
+	require.Equal(t, true, addProps["x-kubernetes-preserve-unknown-fields"])
+}
