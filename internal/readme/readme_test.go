@@ -475,3 +475,56 @@ storages:
 	require.Contains(t, table, "`storages[i].resources`")
 	require.Contains(t, table, "`null`", "missing pointer-to-object should render `null`")
 }
+
+func TestMapStringObjectDefaultsRenderAndValidate(t *testing.T) {
+	yamlContent := `
+## @section Application-specific parameters
+## @param nodeGroups {map[string]node} Worker nodes configuration
+## @field node {node} Node configuration
+## @field node.minReplicas {int} Minimum amount of replicas
+## @field node.maxReplicas {int} Maximum amount of replicas
+## @field node.instanceType {string} Virtual machine instance type
+## @field node.ephemeralStorage {quantity} Ephemeral storage size
+## @field node.roles {[]string} List of node's roles
+## @field node.resources {resources} Available resources for each worker node
+## @field resources.cpu {*quantity} Available CPU
+## @field resources.memory {*quantity} Available memory (RAM)
+## @field node.gpus {[]gpu} List of GPUs to attach
+## @field gpu.name {string} Name of GPU
+nodeGroups:
+  md0:
+    minReplicas: 0
+    maxReplicas: 10
+    instanceType: "u1.medium"
+    ephemeralStorage: 20Gi
+    roles:
+      - ingress-nginx
+    resources:
+      cpu: ""
+      memory: ""
+    gpus: []
+`
+
+	// validate does not error on map[string]T defaults
+	path := writeTempFile(t, yamlContent)
+	defer os.Remove(path)
+
+	vals, err := createValuesObject(path)
+	require.NoError(t, err)
+
+	meta, err := parseMetadataComments(path)
+	require.NoError(t, err)
+
+	var params []ParamMeta
+	for _, s := range meta.Sections {
+		params = append(params, s.Parameters...)
+	}
+
+	require.NoError(t, validateValues(params, typeFields, vals))
+
+	// README table renders `{...}` for map[string]object
+	table := renderTableFromValues(t, yamlContent)
+	require.Contains(t, table, "`nodeGroups`")
+	require.Contains(t, table, "`{...}`")
+	require.Contains(t, table, "`map[string]object`")
+}

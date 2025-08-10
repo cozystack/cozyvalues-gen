@@ -542,21 +542,50 @@ func renderSection(sec *Section) string {
 }
 
 func validateValues(params []ParamMeta, typeFields map[string][]FieldMeta, values map[string]interface{}) error {
-	paramMap := make(map[string]ParamMeta)
+	paramMap := make(map[string]ParamMeta, len(params))
 	for _, p := range params {
 		paramMap[p.Name] = p
 	}
 
-	var check func(path string, val interface{}, typeName string) error
-	check = func(path string, val interface{}, typeName string) error {
-		fields, has := typeFields[typeName]
-		if !has {
-			if !isPrimitive(typeName) &&
-				!strings.Contains(typeName, "quantity") &&
-				!strings.HasPrefix(typeName, "[]") &&
-				!strings.HasPrefix(typeName, "map[") {
-				return nil
+	var checkValue func(path string, val interface{}, typ string) error
+	checkValue = func(path string, val interface{}, typ string) error {
+		if strings.HasPrefix(typ, "map[") {
+			child := deriveTypeName(typ)
+			if m, ok := val.(map[string]interface{}); ok {
+				for k, v := range m {
+					if err := checkValue(path+"."+k, v, child); err != nil {
+						return err
+					}
+				}
 			}
+			return nil
+		}
+
+		if strings.HasPrefix(typ, "[]") {
+			child := deriveTypeName(typ)
+			if arr, ok := val.([]interface{}); ok {
+				for i, v := range arr {
+					if err := checkValue(fmt.Sprintf("%s[%d]", path, i), v, child); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		}
+
+		if strings.HasPrefix(typ, "*") {
+			base := strings.TrimPrefix(typ, "*")
+			return checkValue(path, val, base)
+		}
+
+		base := deriveTypeName(typ)
+
+		if isPrimitive(base) || strings.Contains(base, "quantity") {
+			return nil
+		}
+
+		fields, has := typeFields[base]
+		if !has {
 			return nil
 		}
 
@@ -564,17 +593,18 @@ func validateValues(params []ParamMeta, typeFields map[string][]FieldMeta, value
 		if !ok {
 			return nil
 		}
-		allowed := make(map[string]FieldMeta)
+
+		allowed := make(map[string]FieldMeta, len(fields))
 		for _, f := range fields {
 			allowed[f.Name] = f
 		}
+
 		for k, v := range valMap {
 			fm, exists := allowed[k]
 			if !exists {
 				return fmt.Errorf("field '%s.%s' is not defined in schema", path, k)
 			}
-			childType := deriveTypeName(fm.Type)
-			if err := check(path+"."+k, v, childType); err != nil {
+			if err := checkValue(path+"."+k, v, fm.Type); err != nil {
 				return err
 			}
 		}
@@ -586,12 +616,10 @@ func validateValues(params []ParamMeta, typeFields map[string][]FieldMeta, value
 		if !exists {
 			return fmt.Errorf("parameter '%s' is not defined in schema", k)
 		}
-		childType := deriveTypeName(pm.TypeOriginal)
-		if err := check(k, v, childType); err != nil {
+		if err := checkValue(k, v, pm.TypeOriginal); err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
 
