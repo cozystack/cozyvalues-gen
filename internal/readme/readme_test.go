@@ -631,3 +631,36 @@ storageClass: replicated
 	require.NotContains(t, table, "`emptyobject`")
 	require.Contains(t, table, "`object`")
 }
+
+func TestNoDuplicateFields(t *testing.T) {
+	yamlContent := `
+## @section Example
+## @param storage {storage} Storage root
+## @field storage.requests {*resources} Requests
+## @field storage.limits {*resources} Limits
+## @field resources.cpu {*quantity} CPU
+## @field resources.memory {*quantity} Memory
+
+storage:
+  ## @field storage.requests {*resources} Requests
+  ## @field storage.limits {*resources} Limits
+  requests:
+    cpu: "200m"
+    memory: "256Mi"
+`
+
+	table := renderTableFromValues(t, yamlContent)
+
+	if strings.Count(table, "`storage.requests`") != 1 {
+		t.Fatalf("expected exactly one row for storage.requests, got:\n%s", table)
+	}
+	if strings.Count(table, "`storage.limits`") != 1 {
+		t.Fatalf("expected exactly one row for storage.limits, got:\n%s", table)
+	}
+	if strings.Count(table, "`storage.requests.cpu`") != 1 {
+		t.Fatalf("expected exactly one row for storage.requests.cpu, got:\n%s", table)
+	}
+	if strings.Count(table, "`storage.requests.memory`") != 1 {
+		t.Fatalf("expected exactly one row for storage.requests.memory, got:\n%s", table)
+	}
+}

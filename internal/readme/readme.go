@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -375,10 +376,18 @@ func traverseByType(path string, raw interface{}, typeName string) []ParamToRend
 	if mm, ok := raw.(map[string]interface{}); ok {
 		m = mm
 	}
+
+	rowSeen := map[string]struct{}{}
+
 	for _, fm := range typeFields[typeName] {
 		if fm.Name == "" {
 			continue
 		}
+		key := path + "." + fm.Name + "\x00" + normalizeType(fm.Type)
+		if _, ok := rowSeen[key]; ok {
+			continue
+		}
+
 		val, ok := m[fm.Name]
 		baseType := deriveTypeName(fm.Type)
 		isArrayOfPrimitives := strings.HasPrefix(fm.Type, "[]") && isPrimitive(baseType)
@@ -388,13 +397,10 @@ func traverseByType(path string, raw interface{}, typeName string) []ParamToRend
 		if isDirectPrimitive || isArrayOfPrimitives {
 			if ok {
 				value = valueString(val, ok, fm.Type)
-			} else {
-				// use default from annotation if present
-				if strings.Contains(fm.Type, "default=") {
-					defRe := regexp.MustCompile(`default="([^"]*)"`)
-					if m := defRe.FindStringSubmatch(fm.Type); len(m) == 2 {
-						value = fmt.Sprintf("`%s`", m[1])
-					}
+			} else if strings.Contains(fm.Type, "default=") {
+				defRe := regexp.MustCompile(`default="([^"]*)"`)
+				if m := defRe.FindStringSubmatch(fm.Type); len(m) == 2 {
+					value = fmt.Sprintf("`%s`", m[1])
 				}
 			}
 		}
@@ -405,6 +411,7 @@ func traverseByType(path string, raw interface{}, typeName string) []ParamToRend
 			Type:        normalizeType(fm.Type),
 			Value:       value,
 		})
+		rowSeen[key] = struct{}{}
 
 		childType := deriveTypeName(fm.Type)
 		if _, has := typeFields[childType]; has {
@@ -615,8 +622,13 @@ func validateValues(params []ParamMeta, typeFields map[string][]FieldMeta, value
 		if strings.HasPrefix(typ, "map[") {
 			child := deriveTypeName(typ)
 			if m, ok := val.(map[string]interface{}); ok {
-				for k, v := range m {
-					if err := checkValue(path+"."+k, v, child); err != nil {
+				keys := make([]string, 0, len(m))
+				for k := range m {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				for _, k := range keys {
+					if err := checkValue(path+"."+k, m[k], child); err != nil {
 						return err
 					}
 				}
@@ -661,7 +673,14 @@ func validateValues(params []ParamMeta, typeFields map[string][]FieldMeta, value
 			allowed[f.Name] = f
 		}
 
-		for k, v := range valMap {
+		keys := make([]string, 0, len(valMap))
+		for k := range valMap {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		for _, k := range keys {
+			v := valMap[k]
 			fm, exists := allowed[k]
 			if !exists {
 				return fmt.Errorf("field '%s.%s' is not defined in schema", path, k)
@@ -673,7 +692,14 @@ func validateValues(params []ParamMeta, typeFields map[string][]FieldMeta, value
 		return nil
 	}
 
-	for k, v := range values {
+	topKeys := make([]string, 0, len(values))
+	for k := range values {
+		topKeys = append(topKeys, k)
+	}
+	sort.Strings(topKeys)
+
+	for _, k := range topKeys {
+		v := values[k]
 		pm, exists := paramMap[k]
 		if !exists {
 			return fmt.Errorf("parameter '%s' is not defined in schema", k)
