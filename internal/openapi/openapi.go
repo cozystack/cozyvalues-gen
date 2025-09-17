@@ -295,7 +295,6 @@ func camel(in string) string {
 	}
 	return b.String()
 }
-
 func (g *gen) resolve(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -303,6 +302,17 @@ func (g *gen) resolve(raw string) string {
 	}
 	if isStringFormat(raw) {
 		return "string"
+	}
+
+	// composite types must resolve their element/value types too
+	if strings.HasPrefix(raw, "[]") {
+		base := strings.TrimPrefix(strings.TrimSpace(raw[2:]), "*")
+		return "[]" + g.resolve(base)
+	}
+	if strings.HasPrefix(raw, "map[") && strings.Contains(raw, "]") {
+		idx := strings.Index(raw, "]")
+		base := strings.TrimPrefix(strings.TrimSpace(raw[idx+1:]), "*")
+		return "map[string]" + g.resolve(base)
 	}
 
 	switch raw {
@@ -327,9 +337,6 @@ func (g *gen) resolve(raw string) string {
 	}
 
 	if isPrimitive(raw) || raw == "any" {
-		return raw
-	}
-	if strings.HasPrefix(raw, "map[") || strings.HasPrefix(raw, "[]") {
 		return raw
 	}
 	if idx := strings.LastIndex(raw, "."); idx != -1 {

@@ -703,3 +703,40 @@ labels:
 	require.True(t, ok, "labels.additionalProperties missing")
 	require.Equal(t, true, addProps["x-kubernetes-preserve-unknown-fields"])
 }
+
+func TestPointerSliceElementTypeIsCamelled(t *testing.T) {
+	const yamlContent = `
+## @param nodeGroups {map[string]node} Worker nodes configuration
+## @field node.minReplicas {int} Minimum amount of replicas
+## @field node.maxReplicas {int} Maximum amount of replicas
+## @field node.instanceType {string} Virtual machine instance type
+## @field node.ephemeralStorage {quantity} Ephemeral storage size
+## @field node.roles {[]string} List of node's roles
+## @field node.resources {resources} Resources available to each worker node
+## @field resources.cpu {*quantity} CPU available to each worker node
+## @field resources.memory {*quantity} Memory (RAM) available to each worker node
+## @field node.gpus {*[]gpu} List of GPUs to attach
+## @field gpu.name {string} Name of GPU
+nodeGroups:
+  md0:
+    minReplicas: 0
+    maxReplicas: 10
+    instanceType: "u1.medium"
+    ephemeralStorage: 20Gi
+    roles:
+    - ingress-nginx
+    resources: {}
+    gpus: []
+`
+	rows, err := Parse(writeTempFile(yamlContent))
+	require.NoError(t, err)
+	root := Build(rows)
+
+	g := &gen{pkg: "values"}
+	formatted, _, err := g.Generate(root)
+	require.NoError(t, err)
+	code := string(formatted)
+
+	require.Contains(t, code, "type Gpu struct {", "Gpu struct must be generated with camel-cased name")
+	require.Contains(t, code, "Gpus *[]Gpu `json:\"gpus,omitempty\"`", "field type must be *[]Gpu, not *[]gpu")
+}

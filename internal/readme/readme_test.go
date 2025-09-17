@@ -422,20 +422,6 @@ func TestNormalizeTypePrimitives(t *testing.T) {
 	}
 }
 
-func TestPointerObjectRendersAsEmptyObject(t *testing.T) {
-	yaml := `
-## @param resources {*resources} Resource configuration for etcd
-## @field resources.cpu {*quantity} CPU
-## @field resources.memory {*quantity} Memory
-resources:
-  cpu: 4
-  memory: 1Gi
-`
-	table := renderTableFromValues(t, yaml)
-	require.Contains(t, table, "`resources`")
-	require.Contains(t, table, "`{}`", "pointer-to-object param should render `{}`")
-}
-
 func TestParamWithoutDescription(t *testing.T) {
 	yaml := `
 ## @param foo {string}
@@ -663,4 +649,56 @@ storage:
 	if strings.Count(table, "`storage.requests.memory`") != 1 {
 		t.Fatalf("expected exactly one row for storage.requests.memory, got:\n%s", table)
 	}
+}
+
+func TestPointerToSliceOfObjectsRenderedAndTraversed(t *testing.T) {
+	yaml := `
+## @param node {node} Node configuration
+## @field node.gpus {*[]gpu} GPUs (optional)
+## @field gpu.name {string} Name
+node:
+  gpus: []
+`
+	table := renderTableFromValues(t, yaml)
+
+	require.Contains(t, table, "`node.gpus`", "pointer-to-slice param missing")
+	require.Contains(t, table, "`[]object`", "type for *slice should render as []object")
+	require.Contains(t, table, "`[]`", "value for empty *[] should render as [] (not null) when provided empty list")
+
+	require.Contains(t, table, "`node.gpus[i].name`", "element field not traversed")
+	require.Contains(t, table, "`\"\"`", "element field default for string should be empty quoted")
+}
+
+func TestPointerObjectAlwaysNullEvenWhenProvided(t *testing.T) {
+	yaml := `
+## @section Example
+## @param alerta {alerta} Alerta
+## @field alerta.resources {*resources} Resources configuration
+## @field resources.requests {*request}
+## @field resources.limits {*limit}
+## @field request.cpu {*quantity}
+## @field request.memory {*quantity}
+## @field limit.cpu {*quantity}
+## @field limit.memory {*quantity}
+
+alerta:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+`
+	table := renderTableFromValues(t, yaml)
+
+	// All pointer-to-object values must be `null` in README regardless of presence
+	require.Contains(t, table, "`alerta.resources`")
+	require.Regexp(t, "`alerta\\.resources`.*\\|\\s*`\\*object`\\s*\\|\\s*`null`", table)
+
+	require.Contains(t, table, "`alerta.resources.requests`")
+	require.Regexp(t, "`alerta\\.resources\\.requests`.*\\|\\s*`\\*object`\\s*\\|\\s*`null`", table)
+
+	require.Contains(t, table, "`alerta.resources.limits`")
+	require.Regexp(t, "`alerta\\.resources\\.limits`.*\\|\\s*`\\*object`\\s*\\|\\s*`null`", table)
 }

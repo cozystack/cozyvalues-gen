@@ -129,7 +129,8 @@ func parseMetadataComments(path string) (*Meta, error) {
 
 	// ───────────── first pass: @section & @param ─────────────
 	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
 		if m := sectionRe.FindStringSubmatch(line); m != nil {
 			sec := &Section{Name: m[1]}
 			sections = append(sections, sec)
@@ -286,33 +287,34 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 	var out []ParamToRender
 
 	for _, pm := range params {
-		baseType := deriveTypeName(pm.TypeOriginal)
+		orig := pm.TypeOriginal
+		baseForKind := strings.TrimPrefix(orig, "*")
+		baseType := deriveTypeName(orig)
 
-		isArray := strings.HasPrefix(pm.TypeOriginal, "[]")
-		isMap := strings.HasPrefix(pm.TypeOriginal, "map[")
-		isPtr := strings.HasPrefix(pm.TypeOriginal, "*")
+		isArray := strings.HasPrefix(baseForKind, "[]")
+		isMap := strings.HasPrefix(baseForKind, "map[")
+		isPtr := strings.HasPrefix(orig, "*")
 
 		isArrayPrim := isArray && isPrimitive(baseType)
 		isPtrPrim := isPtr && isPrimitive(baseType)
 
-		val := defaultValueForType(pm.TypeOriginal)
+		val := defaultValueForType(orig)
 
 		switch {
-		// 1. array of primitives ─ concrete list
+		// []primitives — show actual list
 		case isArrayPrim:
 			raw, exists := valuesMap[pm.Name]
-			val = valueString(raw, exists, pm.TypeOriginal)
+			val = valueString(raw, exists, orig)
 
-		// 2. array of objects ─ [] / [...]
+		// []objects — [] or [...]
 		case isArray:
-			raw, ok := valuesMap[pm.Name].([]interface{})
-			if ok && len(raw) > 0 {
+			if raw, ok := valuesMap[pm.Name].([]interface{}); ok && len(raw) > 0 {
 				val = "`[...]`"
 			} else {
 				val = "`[]`"
 			}
 
-		// 3. map[string]object ─ {} / {...}
+		// map[string]object — {} or {...}
 		case isMap:
 			if !isPrimitive(baseType) && len(typeFields[baseType]) > 0 {
 				val = "`{...}`"
@@ -320,54 +322,49 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 				val = "`{}`"
 			}
 
-		// 4. pointer to primitive ─ null / concrete
+		// *primitive — null / concrete
 		case isPtrPrim:
 			raw, exists := valuesMap[pm.Name]
-			val = valueString(raw, exists, pm.TypeOriginal)
+			val = valueString(raw, exists, orig)
 
-		// 5. pointer to **object** ─ null / {}
-		case isPtr && !isPtrPrim:
-			if _, exists := valuesMap[pm.Name]; exists {
-				val = "`{}`"
-			} else {
+		// *collection — null if key missing; render as collection if present
+		case isPtr && (strings.HasPrefix(baseForKind, "[]") || strings.HasPrefix(baseForKind, "map[")):
+			raw, exists := valuesMap[pm.Name]
+			if !exists {
 				val = "`null`"
+			} else if strings.HasPrefix(baseForKind, "[]") {
+				if arr, ok := raw.([]interface{}); ok && len(arr) > 0 {
+					val = "`[...]`"
+				} else {
+					val = "`[]`"
+				}
+			} else {
+				val = "`{}`"
 			}
 
-		// 6. plain object with fields ─ {}
+		// *object — ALWAYS render null (do not derive from values)
+		case isPtr && !isPtrPrim:
+			val = "`null`"
+
+		// plain object with fields — {}
 		case !isPrimitive(baseType) && len(typeFields[baseType]) > 0:
 			val = "`{}`"
 
-		// 7. plain primitive
+		// plain primitive — actual value
 		default:
 			raw, exists := valuesMap[pm.Name]
-			val = valueString(raw, exists, pm.TypeOriginal)
+			val = valueString(raw, exists, orig)
 		}
 
 		out = append(out, ParamToRender{
 			Path:        pm.Name,
 			Description: pm.Description,
-			Type:        normalizeType(pm.TypeOriginal),
+			Type:        normalizeType(orig),
 			Value:       val,
 		})
 		out = append(out, traverseParam(pm, valuesMap[pm.Name], true)...)
 	}
 	return out
-}
-
-func traverseParam(pm ParamMeta, rawVal interface{}, exists bool) []ParamToRender {
-	var rows []ParamToRender
-	typ := pm.TypeOriginal
-	if strings.HasPrefix(typ, "[]") {
-		etype := pm.TypeName
-		if !isPrimitive(etype) {
-			rows = append(rows, traverseByType(fmt.Sprintf("%s[i]", pm.Name), map[string]interface{}{}, pm.TypeName)...)
-		}
-	} else if strings.HasPrefix(typ, "map[") {
-		rows = append(rows, traverseByType(fmt.Sprintf("%s[name]", pm.Name), map[string]interface{}{}, pm.TypeName)...)
-	} else {
-		rows = append(rows, traverseByType(pm.Name, rawVal, pm.TypeName)...)
-	}
-	return rows
 }
 
 func traverseByType(path string, raw interface{}, typeName string) []ParamToRender {
@@ -388,20 +385,66 @@ func traverseByType(path string, raw interface{}, typeName string) []ParamToRend
 			continue
 		}
 
-		val, ok := m[fm.Name]
-		baseType := deriveTypeName(fm.Type)
-		isArrayOfPrimitives := strings.HasPrefix(fm.Type, "[]") && isPrimitive(baseType)
+		val, okVal := m[fm.Name]
+
+		hasPtr := strings.HasPrefix(fm.Type, "*")
+		ft := strings.TrimPrefix(fm.Type, "*")
+		baseType := deriveTypeName(ft)
+
+		isArray := strings.HasPrefix(ft, "[]")
+		isMap := strings.HasPrefix(ft, "map[")
+		isArrayOfPrimitives := isArray && isPrimitive(baseType)
 		isDirectPrimitive := isPrimitive(baseType) || strings.Contains(baseType, "quantity")
 
 		value := defaultValueForType(fm.Type)
-		if isDirectPrimitive || isArrayOfPrimitives {
-			if ok {
-				value = valueString(val, ok, fm.Type)
+
+		switch {
+		case isArray:
+			if okVal {
+				if isArrayOfPrimitives {
+					value = valueString(val, okVal, ft)
+				} else {
+					if arr, ok := val.([]interface{}); ok && len(arr) > 0 {
+						value = "`[...]`"
+					} else {
+						value = "`[]`"
+					}
+				}
+			} else {
+				if hasPtr {
+					value = "`null`"
+				} else {
+					value = "`[]`"
+				}
+			}
+
+		case isMap:
+			if okVal {
+				value = "`{}`"
+			} else {
+				if hasPtr {
+					value = "`null`"
+				} else {
+					value = "`{}`"
+				}
+			}
+
+		case isDirectPrimitive:
+			if okVal {
+				value = valueString(val, okVal, fm.Type)
 			} else if strings.Contains(fm.Type, "default=") {
 				defRe := regexp.MustCompile(`default="([^"]*)"`)
 				if m := defRe.FindStringSubmatch(fm.Type); len(m) == 2 {
 					value = fmt.Sprintf("`%s`", m[1])
 				}
+			}
+
+		default:
+			// *object — ALWAYS render null regardless of provided (even non-empty) content
+			if hasPtr {
+				value = "`null`"
+			} else {
+				value = "`{}`"
 			}
 		}
 
@@ -413,17 +456,84 @@ func traverseByType(path string, raw interface{}, typeName string) []ParamToRend
 		})
 		rowSeen[key] = struct{}{}
 
-		childType := deriveTypeName(fm.Type)
-		if _, has := typeFields[childType]; has {
-			childRaw := map[string]interface{}{}
-			if ok {
-				if mm2, ok2 := val.(map[string]interface{}); ok2 {
-					childRaw = mm2
-				}
+		switch {
+		case strings.HasPrefix(ft, "[]"):
+			elt := deriveTypeName(ft)
+			if _, has := typeFields[elt]; has {
+				rows = append(rows, traverseByType(path+"."+fm.Name+"[i]", map[string]interface{}{}, elt)...)
 			}
-			rows = append(rows, traverseByType(path+"."+fm.Name, childRaw, childType)...)
+		case strings.HasPrefix(ft, "map["):
+			elt := deriveTypeName(ft)
+			if _, has := typeFields[elt]; has {
+				rows = append(rows, traverseByType(path+"."+fm.Name+"[name]", map[string]interface{}{}, elt)...)
+			}
+		default:
+			child := deriveTypeName(ft)
+			if _, has := typeFields[child]; has {
+				childRaw := map[string]interface{}{}
+				if okVal {
+					if mm2, ok2 := val.(map[string]interface{}); ok2 {
+						childRaw = mm2
+					}
+				}
+				rows = append(rows, traverseByType(path+"."+fm.Name, childRaw, child)...)
+			}
 		}
 	}
+	return rows
+}
+
+func isDeepEmpty(v interface{}) bool {
+	switch t := v.(type) {
+	case nil:
+		return true
+	case map[string]interface{}:
+		if len(t) == 0 {
+			return true
+		}
+		for _, vv := range t {
+			if !isDeepEmpty(vv) {
+				return false
+			}
+		}
+		return true
+	case []interface{}:
+		if len(t) == 0 {
+			return true
+		}
+		for _, vv := range t {
+			if !isDeepEmpty(vv) {
+				return false
+			}
+		}
+		return true
+	default:
+		// any primitive present means “not empty”
+		return false
+	}
+}
+
+func traverseParam(pm ParamMeta, rawVal interface{}, exists bool) []ParamToRender {
+	var rows []ParamToRender
+
+	torig := pm.TypeOriginal
+	t := strings.TrimPrefix(torig, "*") // treat *[]T and *map[...]T like collections
+	if strings.HasPrefix(t, "[]") {
+		elt := deriveTypeName(t) // element type name (e.g., "gpu")
+		if !isPrimitive(elt) {
+			rows = append(rows, traverseByType(fmt.Sprintf("%s[i]", pm.Name), map[string]interface{}{}, elt)...)
+		}
+		return rows
+	}
+	if strings.HasPrefix(t, "map[") {
+		elt := deriveTypeName(t) // value type
+		rows = append(rows, traverseByType(fmt.Sprintf("%s[name]", pm.Name), map[string]interface{}{}, elt)...)
+		return rows
+	}
+
+	// scalar/object param
+	base := deriveTypeName(torig)
+	rows = append(rows, traverseByType(pm.Name, rawVal, base)...)
 	return rows
 }
 
@@ -458,12 +568,25 @@ func normalizeType(t string) string {
 		return "*object"
 	}
 
+	// collapse pointer-to-collection types: *[]T → []T, *map[...]V → map[...]V
+	if strings.HasPrefix(t, "*") {
+		base := strings.TrimPrefix(t, "*")
+		if strings.HasPrefix(base, "[]") || strings.HasPrefix(base, "map[") {
+			return normalizeType(base)
+		}
+		// pointer to non-primitive, non-collection → *object
+		if !isPrimitive(base) && !strings.HasPrefix(base, "[]") && !strings.HasPrefix(base, "map[") {
+			return "*object"
+		}
+		// pointer to primitive (or special primitives) stays as-is
+		return "*" + base
+	}
+
 	// if underlying base is primitive, preserve it verbatim (after emptyobject normalization above)
 	base := deriveTypeName(t)
 	if isPrimitive(base) {
 		// show emptyobject as object in composite forms too
 		if base == aliasEmptyObject {
-			// handle map/array already below; for bare it's handled above
 			return strings.ReplaceAll(t, aliasEmptyObject, "object")
 		}
 		return t
@@ -491,15 +614,7 @@ func normalizeType(t string) string {
 		return "map[string]object"
 	}
 
-	if strings.HasPrefix(t, "*") {
-		base := strings.TrimPrefix(t, "*")
-		if !isPrimitive(base) && !strings.HasPrefix(base, "[]") && !strings.HasPrefix(base, "map[") {
-			return "*object"
-		}
-		// *emptyobject already handled above
-		return t
-	}
-
+	// non-primitive scalar becomes object
 	if !isPrimitive(t) && !strings.HasPrefix(t, "[]") && !strings.HasPrefix(t, "map[") {
 		return "object"
 	}
