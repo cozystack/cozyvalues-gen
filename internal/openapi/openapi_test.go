@@ -87,7 +87,13 @@ parent:
 	require.NoError(t, yaml.Unmarshal([]byte(yamlData), &parsed))
 	aliases := map[string]*Node{"parent": root.Child["parent"], "child": root.Child["child"]}
 	PopulateDefaults(root, parsed, aliases)
-	require.Equal(t, "field: value\n", root.Child["parent"].Child["child"].DefaultVal)
+
+	// object field default collapsed to {}
+	require.Equal(t, "{}", root.Child["parent"].Child["child"].DefaultVal)
+
+	// nested field default propagated to the alias type
+	require.Contains(t, root.Child["child"].Child, "field")
+	require.Equal(t, "value", root.Child["child"].Child["field"].DefaultVal)
 }
 
 func TestCollectUndefined(t *testing.T) {

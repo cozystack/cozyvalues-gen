@@ -784,25 +784,40 @@ func PopulateDefaults(n *Node, y interface{}, aliases map[string]*Node) {
 	case map[string]interface{}:
 		for k, yval := range v {
 			child, ok := n.Child[k]
-			if !ok {
-				continue
-			}
-			if yval == nil {
+			if !ok || yval == nil {
 				continue
 			}
 
 			switch vv := yval.(type) {
 			case string, int, int64, float64, bool:
-				// простые типы — кладём литерал как есть (не затираем явный default= из аннотации)
 				if child.DefaultVal == "" {
 					child.DefaultVal = fmt.Sprintf("%v", vv)
 				}
 
 			case map[string]interface{}:
-				// составной объект
-				// 1) если у узла есть дочерние поля (или он алиас на пользовательский тип),
-				//    сериализуем весь объект в YAML и сохраняем в DefaultVal
-				// 2) рекурсивно прокидываем значения внутрь, чтобы вложенным полям выставились дефолты
+				isObj := len(child.Child) > 0
+				var alias *Node
+				if te := strings.TrimPrefix(child.TypeExpr, "*"); te != "" {
+					if a, ok := aliases[te]; ok {
+						alias = a
+						if len(a.Child) > 0 {
+							isObj = true
+						}
+					}
+				}
+
+				if isObj {
+					if child.DefaultVal == "" {
+						child.DefaultVal = "{}"
+					}
+					if alias != nil {
+						PopulateDefaults(alias, vv, aliases)
+					} else {
+						PopulateDefaults(child, vv, aliases)
+					}
+					continue
+				}
+
 				if child.DefaultVal == "" {
 					if b, err := sigyaml.Marshal(vv); err == nil {
 						child.DefaultVal = string(b)
@@ -811,20 +826,7 @@ func PopulateDefaults(n *Node, y interface{}, aliases map[string]*Node) {
 					}
 				}
 
-				// если узел — алиас на тип, прокидываем в него,
-				// иначе — в самого ребёнка
-				if te := strings.TrimPrefix(child.TypeExpr, "*"); te != "" {
-					if alias, ok := aliases[te]; ok {
-						PopulateDefaults(alias, vv, aliases)
-					} else {
-						PopulateDefaults(child, vv, aliases)
-					}
-				} else {
-					PopulateDefaults(child, vv, aliases)
-				}
-
 			default:
-				// слайсы, числа в интерфейсах и пр. — сериализуем «как есть»
 				if child.DefaultVal == "" {
 					if b, err := sigyaml.Marshal(vv); err == nil {
 						child.DefaultVal = string(b)
