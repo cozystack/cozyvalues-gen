@@ -748,7 +748,6 @@ func PopulateDefaults(n *Node, y interface{}, aliases map[string]*Node) {
 			if !ok {
 				continue
 			}
-
 			if yval == nil {
 				continue
 			}
@@ -759,19 +758,36 @@ func PopulateDefaults(n *Node, y interface{}, aliases map[string]*Node) {
 					child.DefaultVal = fmt.Sprintf("%v", yval)
 				}
 			default:
-				if child.DefaultVal == "" {
-					serialized, _ := sigyaml.Marshal(yval)
-					child.DefaultVal = string(serialized)
-				}
+				// For composite values:
+				// - If the field is a struct-like object (has children or resolves to an alias node),
+				//   set the field default to "{}" and push defaults into nested fields.
+				// - Otherwise (leaf map[...] or slice literal), keep the serialized value.
 				if m, ok := yval.(map[string]interface{}); ok {
 					if len(child.Child) > 0 {
+						if child.DefaultVal == "" {
+							child.DefaultVal = "{}"
+						}
 						PopulateDefaults(child, m, aliases)
 						continue
 					}
 					te := strings.TrimPrefix(child.TypeExpr, "*")
 					if alias, ok := aliases[te]; ok {
+						if child.DefaultVal == "" {
+							child.DefaultVal = "{}"
+						}
 						PopulateDefaults(alias, m, aliases)
+						continue
 					}
+					if child.DefaultVal == "" {
+						serialized, _ := sigyaml.Marshal(m)
+						child.DefaultVal = string(serialized)
+					}
+					continue
+				}
+
+				if child.DefaultVal == "" {
+					serialized, _ := sigyaml.Marshal(yval)
+					child.DefaultVal = string(serialized)
 				}
 			}
 		}
