@@ -740,3 +740,131 @@ nodeGroups:
 	require.Contains(t, code, "type Gpu struct {", "Gpu struct must be generated with camel-cased name")
 	require.Contains(t, code, "Gpus *[]Gpu `json:\"gpus,omitempty\"`", "field type must be *[]Gpu, not *[]gpu")
 }
+
+func TestAnnotationDefaultRawJSON(t *testing.T) {
+	const yamlContent = `
+## @param nodeGroups {map[string]node} Worker nodes configuration
+## @field node.minReplicas {int default=0}
+## @field node.maxReplicas {int default=10}
+## @field node.instanceType {string default="u1.medium"}
+## @field node.ephemeralStorage {quantity default="20Gi"}
+## @field node.roles {[]string default={}}
+## @field node.resources {resources default={}}
+## @field node.gpus {[]gpu default={"name":"nvidia.com/AD102GL_L40S"}}
+## @field gpu.name {string}
+nodeGroups: {}
+`
+	tmpfile := writeTempFile(yamlContent)
+	rows, err := Parse(tmpfile)
+	require.NoError(t, err)
+	root := Build(rows)
+
+	tmpdir, gofile, err := WriteGeneratedGoAndStub(root, "values")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpdir)
+
+	crdBytes, err := CG(filepath.Dir(gofile))
+	require.NoError(t, err)
+
+	outfile := filepath.Join(tmpdir, "schema.json")
+	require.NoError(t, WriteValuesSchema(crdBytes, outfile))
+
+	raw, err := os.ReadFile(outfile)
+	require.NoError(t, err)
+
+	var js map[string]interface{}
+	require.NoError(t, json.Unmarshal(raw, &js))
+	compact, err := json.Marshal(js)
+	require.NoError(t, err)
+	schema := string(compact)
+
+	require.Contains(t, schema, `"default":"u1.medium"`)
+	require.Contains(t, schema, `"default":"20Gi"`)
+	require.Contains(t, schema, `"default":{}`)
+	require.Contains(t, schema, `"default":[]`)
+	require.Contains(t, schema, `"default":{"name":"nvidia.com/AD102GL_L40S"}`)
+}
+
+func TestAnnotationDefaultEmptyObject(t *testing.T) {
+	const yamlContent = `
+## @param backup {backup} Backup configuration
+## @field backup.settings {object default={}} Freeform settings
+backup: {}
+`
+	tmpfile := writeTempFile(yamlContent)
+	rows, err := Parse(tmpfile)
+	require.NoError(t, err)
+	root := Build(rows)
+
+	tmpdir, gofile, err := WriteGeneratedGoAndStub(root, "values")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpdir)
+
+	crdBytes, err := CG(filepath.Dir(gofile))
+	require.NoError(t, err)
+
+	outfile := filepath.Join(tmpdir, "schema.json")
+	require.NoError(t, WriteValuesSchema(crdBytes, outfile))
+
+	raw, err := os.ReadFile(outfile)
+	require.NoError(t, err)
+	schema := string(raw)
+
+	require.Contains(t, schema, `"settings"`)
+	require.Contains(t, schema, `"default": {}`, "expected explicit default={} to be preserved in schema")
+}
+
+func TestResourcesSchemaKeepsCpuAndMemory(t *testing.T) {
+	const yaml = `
+## @param controlPlane {controlPlane}
+controlPlane:
+  apiServer:
+    resources: {}
+
+## @field controlPlane.apiServer {apiServer}
+## @field apiServer.resources {resources}
+
+## @field resources.cpu {*quantity} CPU available
+## @field resources.memory {*quantity} Memory available
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+
+	root := Build(rows)
+	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	crdBytes, err := CG(filepath.Dir(goFile))
+	require.NoError(t, err)
+
+	outSchema := filepath.Join(tmpDir, "values.schema.json")
+	require.NoError(t, WriteValuesSchema(crdBytes, outSchema))
+
+	raw, err := os.ReadFile(outSchema)
+	require.NoError(t, err)
+
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(raw, &schema))
+
+	props := schema["properties"].(map[string]any)
+	cp := props["controlPlane"].(map[string]any)
+	cpProps := cp["properties"].(map[string]any)
+	api := cpProps["apiServer"].(map[string]any)
+	apiProps := api["properties"].(map[string]any)
+	res := apiProps["resources"].(map[string]any)
+
+	require.Equal(t, "object", res["type"])
+	require.NotContains(t, res, "x-kubernetes-preserve-unknown-fields",
+		"resources must be a structured object, not free-form")
+
+	rp := res["properties"].(map[string]any)
+	cpu := rp["cpu"].(map[string]any)
+	mem := rp["memory"].(map[string]any)
+
+	require.Equal(t, true, cpu["x-kubernetes-int-or-string"])
+	require.Equal(t, true, mem["x-kubernetes-int-or-string"])
+}

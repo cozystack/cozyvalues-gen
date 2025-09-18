@@ -702,3 +702,46 @@ alerta:
 	require.Contains(t, table, "`alerta.resources.limits`")
 	require.Regexp(t, "`alerta\\.resources\\.limits`.*\\|\\s*`\\*object`\\s*\\|\\s*`null`", table)
 }
+
+func TestExplicitDefaultAnnotationRawObject(t *testing.T) {
+	yamlContent := `
+## @param nodeGroups {map[string]nodeGroup} Worker nodes configuration
+## @field nodeGroup {nodeGroup} Node configuration
+## @field nodeGroup.minReplicas {int default=0} Minimum amount of replicas
+## @field nodeGroup.maxReplicas {int default=10} Maximum amount of replicas
+## @field nodeGroup.instanceType {string default="u1.medium"} Virtual machine instance type
+## @field nodeGroup.ephemeralStorage {quantity default="20Gi"} Ephemeral storage size
+## @field nodeGroup.roles {[]string default=[]} List of node's roles
+## @field nodeGroup.resources {resources default={}} Resources available to each worker node
+## @field nodeGroup.gpus {[]gpu default={"name":"nvidia.com/AD102GL_L40S"}} GPUs
+nodeGroups: {}
+`
+	table := renderTableFromValues(t, yamlContent)
+
+	require.Contains(t, table, "`nodeGroups[name].instanceType`")
+	require.Contains(t, table, "`u1.medium`")
+
+	require.Contains(t, table, "`nodeGroups[name].ephemeralStorage`")
+	require.Contains(t, table, "`20Gi`")
+
+	require.Contains(t, table, "`nodeGroups[name].roles`")
+	require.Contains(t, table, "`[]`")
+
+	require.Contains(t, table, "`nodeGroups[name].resources`")
+	require.Contains(t, table, "`{}`")
+
+	require.Contains(t, table, "`nodeGroups[name].gpus[i].name`")
+	require.Contains(t, table, "`nvidia.com/AD102GL_L40S`")
+}
+
+func TestExplicitDefaultEmptyObject(t *testing.T) {
+	yamlContent := `
+## @param backup {backup} Backup configuration
+## @field backup.settings {object default={}} Freeform settings
+backup: {}
+`
+	table := renderTableFromValues(t, yamlContent)
+
+	require.Contains(t, table, "`backup.settings`")
+	require.Contains(t, table, "`{}`", "expected explicit default={} to render as {}")
+}

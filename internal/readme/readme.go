@@ -125,7 +125,7 @@ func parseMetadataComments(path string) (*Meta, error) {
 	sectionRe := regexp.MustCompile(`^#{1,}\s+@section\s+(.*)$`)
 	// description part is optional
 	paramRe := regexp.MustCompile(`^#{1,}\s+@param\s+(\w+)\s+\{([^}]+)\}(?:\s+(.*))?$`)
-	fieldRe := regexp.MustCompile(`^#{1,}\s+@field\s+([\w\.]+)\s+\{([^}]+)\}\s*(.*)$`)
+	fieldRe := regexp.MustCompile(`^#{1,}\s+@field\s+([\w\.]+)\s+\{(.+)\}\s*(.*)$`)
 
 	// ───────────── first pass: @section & @param ─────────────
 	lines := strings.Split(string(data), "\n")
@@ -278,6 +278,36 @@ func buildAliasMap(params []ParamMeta) map[string]string {
 
 func combine(vals map[string]interface{}) { valuesMap = vals }
 
+// place below helpers (before buildParamsToRender)
+
+var reAnnoDefault = regexp.MustCompile(`\bdefault\s*=\s*(?:"([^"]*)"|(\{[^}]*\}|$begin:math:display$[^$end:math:display$]*\]|true|false|-?\d+(?:\.\d+)?))`)
+
+func extractAnnotationDefault(typeExpr string) (string, bool) {
+	m := reAnnoDefault.FindStringSubmatch(typeExpr)
+	if m == nil {
+		return "", false
+	}
+	if m[1] != "" {
+		return m[1], true
+	}
+	return m[2], true
+}
+
+func renderAnnotationDefault(val string) string {
+	s := strings.TrimSpace(val)
+	switch s {
+	case "{}":
+		return "`{}`"
+	case "[]":
+		return "`[]`"
+	}
+	var parsed interface{}
+	if err := yaml.Unmarshal([]byte(s), &parsed); err == nil {
+		return valueString(parsed, true, "")
+	}
+	return fmt.Sprintf("`%s`", strings.Trim(s, `"`))
+}
+
 // ---------------------------------------------------------------------------
 //
 //	BuildParamsToRender – table rows for README
@@ -301,37 +331,60 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 		val := defaultValueForType(orig)
 
 		switch {
-		// []primitives — show actual list
 		case isArrayPrim:
 			raw, exists := valuesMap[pm.Name]
-			val = valueString(raw, exists, orig)
+			if !exists {
+				if def, ok := extractAnnotationDefault(orig); ok {
+					val = renderAnnotationDefault(def)
+				} else {
+					val = defaultValueForType(orig)
+				}
+			} else {
+				val = valueString(raw, exists, orig)
+			}
 
-		// []objects — [] or [...]
 		case isArray:
-			if raw, ok := valuesMap[pm.Name].([]interface{}); ok && len(raw) > 0 {
-				val = "`[...]`"
+			if raw, ok := valuesMap[pm.Name].([]interface{}); ok {
+				if len(raw) > 0 {
+					val = "`[...]`"
+				} else {
+					val = "`[]`"
+				}
+			} else if def, ok := extractAnnotationDefault(orig); ok {
+				val = renderAnnotationDefault(def)
 			} else {
 				val = "`[]`"
 			}
 
-		// map[string]object — {} or {...}
 		case isMap:
 			if !isPrimitive(baseType) && len(typeFields[baseType]) > 0 {
 				val = "`{...}`"
+			} else if def, ok := extractAnnotationDefault(orig); ok {
+				val = renderAnnotationDefault(def)
 			} else {
 				val = "`{}`"
 			}
 
-		// *primitive — null / concrete
 		case isPtrPrim:
 			raw, exists := valuesMap[pm.Name]
-			val = valueString(raw, exists, orig)
+			if !exists {
+				if def, ok := extractAnnotationDefault(orig); ok {
+					val = renderAnnotationDefault(def)
+				} else {
+					val = "`null`"
+				}
+			} else {
+				val = valueString(raw, exists, orig)
+			}
 
-		// *collection — null if key missing; render as collection if present
 		case isPtr && (strings.HasPrefix(baseForKind, "[]") || strings.HasPrefix(baseForKind, "map[")):
 			raw, exists := valuesMap[pm.Name]
 			if !exists {
-				val = "`null`"
+				if def, ok := extractAnnotationDefault(orig); ok {
+					val = renderAnnotationDefault(def)
+				} else {
+					val = "`null`"
+				}
 			} else if strings.HasPrefix(baseForKind, "[]") {
 				if arr, ok := raw.([]interface{}); ok && len(arr) > 0 {
 					val = "`[...]`"
@@ -342,18 +395,31 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 				val = "`{}`"
 			}
 
-		// *object — ALWAYS render null (do not derive from values)
 		case isPtr && !isPtrPrim:
-			val = "`null`"
+			if def, ok := extractAnnotationDefault(orig); ok {
+				val = renderAnnotationDefault(def)
+			} else {
+				val = "`null`"
+			}
 
-		// plain object with fields — {}
 		case !isPrimitive(baseType) && len(typeFields[baseType]) > 0:
-			val = "`{}`"
+			if def, ok := extractAnnotationDefault(orig); ok {
+				val = renderAnnotationDefault(def)
+			} else {
+				val = "`{}`"
+			}
 
-		// plain primitive — actual value
 		default:
 			raw, exists := valuesMap[pm.Name]
-			val = valueString(raw, exists, orig)
+			if !exists {
+				if def, ok := extractAnnotationDefault(orig); ok {
+					val = renderAnnotationDefault(def)
+				} else {
+					val = defaultValueForType(orig)
+				}
+			} else {
+				val = valueString(raw, exists, orig)
+			}
 		}
 
 		out = append(out, ParamToRender{
@@ -375,6 +441,41 @@ func traverseByType(path string, raw interface{}, typeName string) []ParamToRend
 	}
 
 	rowSeen := map[string]struct{}{}
+
+	ensureSynthFromDefault := func(parentPath, ft string) []ParamToRender {
+		var out []ParamToRender
+		if def, ok := extractAnnotationDefault(ft); ok {
+			var parsed interface{}
+			if err := yaml.Unmarshal([]byte(def), &parsed); err == nil {
+				if mm, ok := parsed.(map[string]interface{}); ok {
+					keys := make([]string, 0, len(mm))
+					for k := range mm {
+						keys = append(keys, k)
+					}
+					sort.Strings(keys)
+					for _, k := range keys {
+						val := mm[k]
+						typ := "object"
+						switch val.(type) {
+						case string:
+							typ = "string"
+						case bool:
+							typ = "bool"
+						case int, int64, float64:
+							typ = "int"
+						}
+						out = append(out, ParamToRender{
+							Path:        parentPath + "." + k,
+							Description: "",
+							Type:        normalizeType(typ),
+							Value:       valueString(val, true, typ),
+						})
+					}
+				}
+			}
+		}
+		return out
+	}
 
 	for _, fm := range typeFields[typeName] {
 		if fm.Name == "" {
@@ -410,39 +511,41 @@ func traverseByType(path string, raw interface{}, typeName string) []ParamToRend
 						value = "`[]`"
 					}
 				}
+			} else if def, ok := extractAnnotationDefault(fm.Type); ok {
+				value = renderAnnotationDefault(def)
+			} else if hasPtr {
+				value = "`null`"
 			} else {
-				if hasPtr {
-					value = "`null`"
-				} else {
-					value = "`[]`"
-				}
+				value = "`[]`"
 			}
 
 		case isMap:
 			if okVal {
 				value = "`{}`"
+			} else if def, ok := extractAnnotationDefault(fm.Type); ok {
+				value = renderAnnotationDefault(def)
+			} else if hasPtr {
+				value = "`null`"
 			} else {
-				if hasPtr {
-					value = "`null`"
-				} else {
-					value = "`{}`"
-				}
+				value = "`{}`"
 			}
 
 		case isDirectPrimitive:
 			if okVal {
 				value = valueString(val, okVal, fm.Type)
-			} else if strings.Contains(fm.Type, "default=") {
-				defRe := regexp.MustCompile(`default="([^"]*)"`)
-				if m := defRe.FindStringSubmatch(fm.Type); len(m) == 2 {
-					value = fmt.Sprintf("`%s`", m[1])
-				}
+			} else if def, ok := extractAnnotationDefault(fm.Type); ok {
+				value = renderAnnotationDefault(def)
 			}
 
 		default:
-			// *object — ALWAYS render null regardless of provided (even non-empty) content
 			if hasPtr {
-				value = "`null`"
+				if def, ok := extractAnnotationDefault(fm.Type); ok {
+					value = renderAnnotationDefault(def)
+				} else {
+					value = "`null`"
+				}
+			} else if def, ok := extractAnnotationDefault(fm.Type); ok {
+				value = renderAnnotationDefault(def)
 			} else {
 				value = "`{}`"
 			}
@@ -461,6 +564,8 @@ func traverseByType(path string, raw interface{}, typeName string) []ParamToRend
 			elt := deriveTypeName(ft)
 			if _, has := typeFields[elt]; has {
 				rows = append(rows, traverseByType(path+"."+fm.Name+"[i]", map[string]interface{}{}, elt)...)
+			} else {
+				rows = append(rows, ensureSynthFromDefault(path+"."+fm.Name+"[i]", fm.Type)...)
 			}
 		case strings.HasPrefix(ft, "map["):
 			elt := deriveTypeName(ft)
