@@ -101,7 +101,7 @@ func main() {
 	}
 
 	if outSchema != "" {
-		if err := openapi.WriteValuesSchema(crdBytes, outSchema); err != nil {
+		if err := openapi.WriteValuesSchemaWithOrder(crdBytes, outSchema, tree); err != nil {
 			fmt.Printf("values schema: %v\n", err)
 			os.Exit(1)
 		}
