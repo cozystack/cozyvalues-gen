@@ -179,6 +179,7 @@ type Node struct {
 	Comment    string
 	Parent     *Node
 	Child      map[string]*Node
+	Order      int
 }
 
 func newNode(name string, p *Node) *Node {
@@ -196,6 +197,7 @@ func ensure(root *Node, name string) *Node {
 
 func Build(rows []Raw) *Node {
 	root := newNode("Config", nil)
+	orderCounter := 0
 	isPrim := func(s string) bool { return isPrimitive(strings.TrimPrefix(s, "*")) }
 	addImplicit := func(name string) {
 		if name == "" || isPrim(name) || strings.HasPrefix(name, "[]") || strings.HasPrefix(name, "map[") {
@@ -222,6 +224,8 @@ func Build(rows []Raw) *Node {
 			if i == len(r.Path)-1 {
 				if r.K == kParam {
 					cur.IsParam = true
+					cur.Order = orderCounter
+					orderCounter++
 				}
 				cur.TypeExpr = r.TypeExpr
 				cur.Comment = r.Description
@@ -258,6 +262,11 @@ type gen struct {
 	imp map[string]string
 	ff  map[string]bool
 	def map[string]bool
+}
+
+// NewGen creates a new generator instance
+func NewGen(pkg string) *gen {
+	return &gen{pkg: pkg}
 }
 
 func (g *gen) addImpAlias(path, alias string) {
@@ -422,7 +431,7 @@ func (g *gen) writeStruct(n *Node) {
 		g.buf.WriteString("}\n\n")
 
 		g.buf.WriteString("type ConfigSpec struct {\n")
-		keys := sortedKeys(n.Child)
+		keys := sortedKeysByOrder(n.Child)
 		for _, k := range keys {
 			c := n.Child[k]
 			if !c.IsParam {
@@ -448,7 +457,7 @@ func (g *gen) writeStruct(n *Node) {
 	}
 
 	g.buf.WriteString(fmt.Sprintf("type %s struct {\n", name))
-	keys := sortedKeys(n.Child)
+	keys := sortedKeysByOrder(n.Child)
 	for _, k := range keys {
 		g.emitField(n.Child[k])
 	}
@@ -562,6 +571,22 @@ func sortedKeys[M ~map[K]V, K comparable, V any](m M) []K {
 	}
 	sort.Slice(keys, func(i, j int) bool {
 		return fmt.Sprint(keys[i]) < fmt.Sprint(keys[j])
+	})
+	return keys
+}
+
+func sortedKeysByOrder(nodes map[string]*Node) []string {
+	keys := make([]string, 0, len(nodes))
+	for k := range nodes {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		nodeI := nodes[keys[i]]
+		nodeJ := nodes[keys[j]]
+		if nodeI.Order != 0 || nodeJ.Order != 0 {
+			return nodeI.Order < nodeJ.Order
+		}
+		return keys[i] < keys[j]
 	})
 	return keys
 }
@@ -744,6 +769,10 @@ func CG(pkgDir string) ([]byte, error) {
 /* -------------------------------------------------------------------------- */
 
 func WriteValuesSchema(crdBytes []byte, outPath string) error {
+	return WriteValuesSchemaWithOrder(crdBytes, outPath, nil)
+}
+
+func WriteValuesSchemaWithOrder(crdBytes []byte, outPath string, root *Node) error {
 	docs := bytes.Split(crdBytes, []byte("\n---"))
 	if len(docs) == 0 {
 		return fmt.Errorf("empty CRD data")
@@ -758,6 +787,42 @@ func WriteValuesSchema(crdBytes []byte, outPath string) error {
 	}
 
 	specSchema := obj.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+
+	if root != nil {
+		keys := sortedKeysByOrder(root.Child)
+
+		var buf bytes.Buffer
+		buf.WriteString("{\n")
+		buf.WriteString("  \"title\": \"Chart Values\",\n")
+		buf.WriteString("  \"type\": \"object\",\n")
+		buf.WriteString("  \"properties\": {\n")
+
+		first := true
+		for _, key := range keys {
+			if node, exists := root.Child[key]; exists && node.IsParam {
+				if prop, exists := specSchema.Properties[key]; exists {
+					if !first {
+						buf.WriteString(",\n")
+					}
+					first = false
+
+					propJSON, err := json.MarshalIndent(prop, "    ", "  ")
+					if err != nil {
+						return err
+					}
+
+					buf.WriteString(fmt.Sprintf("    \"%s\": %s", key, string(propJSON)))
+				}
+			}
+		}
+
+		buf.WriteString("\n  }\n")
+		buf.WriteString("}\n")
+
+		return os.WriteFile(outPath, buf.Bytes(), 0o644)
+	}
+
+	// Fallback
 	out := struct {
 		Title      string                              `json:"title"`
 		Type       string                              `json:"type"`
