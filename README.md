@@ -1,13 +1,17 @@
 # cozyvalues-gen
 
-Tiny helper that turns **comment-annotated `values.yaml`** files into:
+Tiny helper that turns **JSDoc-annotated `values.yaml`** files into:
 
 1. **Go structs** – strongly typed, IDE-friendly.
 2. **CustomResourceDefinitions (CRD)** – produced by `controller-gen`.
 3. **values.schema.json** – OpenAPI schema extracted from the CRD.
 4. **README.md** – auto-updated `## Parameters` section.
 
-The chain “_structs → CRD → OpenAPI_” re-uses the same code that Kubernetes itself relies on, so you get **maximum type compatibility** for free.
+The chain "_structs → CRD → OpenAPI_" re-uses the same code that Kubernetes itself relies on, so you get **maximum type compatibility** for free.
+
+## Syntax Overview
+
+Uses **JSDoc-like syntax** for clean, readable type annotations:
 
 ---
 
@@ -53,6 +57,59 @@ The binary lands in `$(go env GOPATH)/bin` (usually `~/go/bin`). Make sure that 
 ### Download a pre‑built release binary
 
 Head over to [https://github.com/cozystack/cozyvalues-gen/releases](https://github.com/cozystack/cozyvalues-gen/releases), grab the archive for your OS/arch, unpack it somewhere on your `$PATH`.
+
+## Annotation Tags
+
+### @param
+Defines a top-level parameter:
+```yaml
+## @param {type} name - description
+## @param {string} hostname - Server hostname
+hostname: "example.com"
+
+## @param {int} replicas - Number of replicas
+replicas: 3
+```
+
+### @typedef
+Defines a custom type (struct):
+```yaml
+## @typedef {struct} Database - Database configuration
+## @field {string} host - Database host
+## @field {int} port - Database port
+
+## @param {Database} database - Database config
+database:
+  host: localhost
+  port: 5432
+```
+
+### @field / @property
+Defines fields within a typedef (@property is a synonym):
+```yaml
+## @typedef {struct} User
+## @field {string} name - User name
+## @field {string} [email] - Email (optional, with omitempty)
+## @field {int} age=18 - Age with default value
+```
+
+### @enum
+Defines an enumeration type:
+```yaml
+## @enum {string} Size - Size preset
+## @value small
+## @value medium
+## @value large
+
+## @param {Size} size="medium" - Selected size
+size: "medium"
+```
+
+### Special Syntax
+
+- **Optional fields**: `[fieldName]` adds `omitempty` to JSON tag
+- **Pointers**: `{*type}` or `{?type}` (equivalent)
+- **Default values**: `fieldName=value` or `fieldName="value"`
 
 ## Supported value types
 

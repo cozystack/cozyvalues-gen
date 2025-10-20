@@ -44,9 +44,11 @@ func renderTableFromValues(t *testing.T, valuesYaml string) string {
 
 func TestObjectWithNestedFields(t *testing.T) {
 	yamlContent := `
-## @param backup {backup} Backup configuration
-## @field backup.enabled {bool} Enable regular backups
-## @field backup.schedule {string} Cron schedule for automated backups
+## @typedef {struct} Backup - Backup configuration
+## @field {bool} enabled - Enable regular backups
+## @field {string} schedule - Cron schedule for automated backups
+
+## @param {Backup} backup - Backup configuration
 backup:
   enabled: false
   schedule: "0 2 * * *"
@@ -65,9 +67,11 @@ backup:
 
 func TestArrayWithValues(t *testing.T) {
 	yamlContent := `
-## @param metricsStorages {[]metricsStorage} Metrics storage
-## @field metricsStorage.name {string default="5d"} Name
-## @field metricsStorage.retentionPeriod {string} Retention
+## @typedef {struct} MetricsStorage - Metrics storage configuration
+## @field {string} name="5d" - Name
+## @field {string} retentionPeriod - Retention
+
+## @param {[]MetricsStorage} metricsStorages - Metrics storage
 metricsStorages:
 - name: shortterm
   retentionPeriod: "3d"
@@ -91,9 +95,11 @@ metricsStorages:
 
 func TestEmptyArrayWithZeroValues(t *testing.T) {
 	yamlContent := `
-## @param logsStorages {[]logsStorage} Logs storage
-## @field logsStorage.name {string} Name
-## @field logsStorage.retentionPeriod {string} Retention
+## @typedef {struct} LogsStorage - Logs storage configuration
+## @field {string} name - Name
+## @field {string} retentionPeriod - Retention
+
+## @param {[]LogsStorage} logsStorages - Logs storage
 logsStorages: []
 `
 	table := renderTableFromValues(t, yamlContent)
@@ -107,9 +113,13 @@ logsStorages: []
 
 func TestMapWithNestedObjects(t *testing.T) {
 	yamlContent := `
-## @param databases {map[string]database} Databases
-## @field database.roles {*databaseRoles} Roles
-## @field databaseRoles.admin {[]string} Admin users
+## @typedef {struct} DatabaseRoles - Database roles
+## @field {[]string} admin - Admin users
+
+## @typedef {struct} Database - Database configuration
+## @field {*DatabaseRoles} roles - Roles
+
+## @param {map[string]Database} databases - Databases
 databases:
   myapp:
     roles:
@@ -129,9 +139,13 @@ databases:
 
 func TestNestedObjectDefaults(t *testing.T) {
 	yamlContent := `
-## @param postgresql {postgresql} PostgreSQL
-## @field postgresql.parameters {postgresqlParameters} Parameters
-## @field postgresqlParameters.max_connections {int} Max connections
+## @typedef {struct} PostgresqlParameters - PostgreSQL parameters
+## @field {int} max_connections - Max connections
+
+## @typedef {struct} Postgresql - PostgreSQL configuration
+## @field {PostgresqlParameters} parameters - Parameters
+
+## @param {Postgresql} postgresql - PostgreSQL
 postgresql: {}
 `
 	table := renderTableFromValues(t, yamlContent)
@@ -159,26 +173,26 @@ func TestEmptyStringsRenderedAsQuoted(t *testing.T) {
 
 func TestIntegerLists(t *testing.T) {
 	yamlContent := `
-## @param intList {[]int} A required list of integers, empty.
+## @param {[]int} intList - A required list of integers, empty.
 intList:
 
-## @param intListSingle {[]int} A list of integers with one value.
+## @param {[]int} intListSingle - A list of integers with one value.
 intListSingle:
   - 80
 
-## @param intListMultiple {[]int} A list of integers with one value.
+## @param {[]int} intListMultiple - A list of integers with one value.
 intListMultiple:
   - 80
   - 8080
 
-## @param intListNullable {[]*int} A nullable list of integers, empty.
+## @param {[]*int} intListNullable - A nullable list of integers, empty.
 intListNullable:
 
-## @param intListNullableSingle {[]*int} A nullable list of integers with one value.
+## @param {[]*int} intListNullableSingle - A nullable list of integers with one value.
 intListNullableSingle:
   - 80
 
-## @param intListNullableMultiple {[]*int} A nullable list of integers with multiple values.
+## @param {[]*int} intListNullableMultiple - A nullable list of integers with multiple values.
 intListNullableMultiple:
   - 80
   - 8080
@@ -200,26 +214,26 @@ intListNullableMultiple:
 
 func TestStringLists(t *testing.T) {
 	yamlContent := `
-## @param stringList {[]string} A required list of strings, empty.
+## @param {[]string} stringList - A required list of strings, empty.
 stringList:
 
-## @param stringListSingle {[]string} A required list of strings with one value.
+## @param {[]string} stringListSingle - A required list of strings with one value.
 stringListSingle:
   - "user1"
 
-## @param stringListMultiple {[]string} A required list of strings with multiple values.
+## @param {[]string} stringListMultiple - A required list of strings with multiple values.
 stringListMultiple:
   - "user1"
   - "user2"
 
-## @param stringListNullable {[]*string} A nullable list of strings, empty.
+## @param {[]*string} stringListNullable - A nullable list of strings, empty.
 stringListNullable:
 
-## @param stringListNullableSingle {[]*string} A nullable list of strings with one value.
+## @param {[]*string} stringListNullableSingle - A nullable list of strings with one value.
 stringListNullableSingle:
   - "user1"
 
-## @param stringListNullableMultiple {[]*string} A nullable list of strings with multiple values.
+## @param {[]*string} stringListNullableMultiple - A nullable list of strings with multiple values.
 stringListNullableMultiple:
   - "user1"
   - "user2"
@@ -235,13 +249,13 @@ stringListNullableMultiple:
 
 func TestBasicTypes(t *testing.T) {
 	yamlContent := `
-## @param testInt {int} Integer variable
+## @param {int} testInt - Integer variable
 testInt:
-## @param testIntDefault {int} Integer variable with default value
+## @param {int} testIntDefault - Integer variable with default value
 testIntDefault: 10
-## @param testBoolTrue {bool} Boolean variable, defaults to true
+## @param {bool} testBoolTrue - Boolean variable, defaults to true
 testBoolTrue: true
-## @param testStringDefault {string} String variable with default value
+## @param {string} testStringDefault - String variable with default value
 testStringDefault: "hello"
 `
 	table := renderTableFromValues(t, yamlContent)
@@ -261,9 +275,9 @@ testStringDefault: "hello"
 
 func TestQuantities(t *testing.T) {
 	yamlContent := `
-## @param quantityDefaultCpuShare {quantity} A quantity default with vCPU share.
+## @param {quantity} quantityDefaultCpuShare - A quantity default with vCPU share.
 quantityDefaultCpuShare: "100m"
-## @param quantityNullableDefaultRam {*quantity} A nullable quantity with a default RAM size.
+## @param {*quantity} quantityNullableDefaultRam - A nullable quantity with a default RAM size.
 quantityNullableDefaultRam: "500MiB"
 `
 	table := renderTableFromValues(t, yamlContent)
@@ -277,9 +291,13 @@ quantityNullableDefaultRam: "500MiB"
 
 func TestComplexObjectFields(t *testing.T) {
 	yamlContent := `
-## @param foo {foo} Configuration for foo
-## @field foo.db {fooDB} Field with custom type declared locally
-## @field fooDB.volume {string} Sub-field declared with path relative to custom type
+## @typedef {struct} FooDB - FooDB configuration
+## @field {string} volume - Sub-field declared with path relative to custom type
+
+## @typedef {struct} Foo - Foo configuration
+## @field {FooDB} db - Field with custom type declared locally
+
+## @param {Foo} foo - Configuration for foo
 foo:
   db:
     volume: "10Gi"
@@ -292,7 +310,9 @@ foo:
 
 func TestTemplateVar(t *testing.T) {
 	yamlContent := `
-## @param test {test} Test variable
+## @typedef {struct} Test - Test type
+
+## @param {Test} test - Test variable
 test:
 `
 	table := renderTableFromValues(t, yamlContent)
@@ -303,22 +323,22 @@ test:
 
 func TestNullableDefaultsRenderedAsNull(t *testing.T) {
 	yamlContent := `
-## @param testIntNullable {*int} Integer variable, nullable
+## @param {*int} testIntNullable - Integer variable, nullable
 testIntNullable:
 
-## @param testBoolNullable {*bool} Boolean variable, nullable
+## @param {*bool} testBoolNullable - Boolean variable, nullable
 testBoolNullable:
 
-## @param testStringNullable {*string} String variable, nullable
+## @param {*string} testStringNullable - String variable, nullable
 testStringNullable:
 
-## @param quantityNullable {*quantity} A nullable quantity value.
+## @param {*quantity} quantityNullable - A nullable quantity value.
 quantityNullable:
 
-## @param intListNullable {*[]int} A nullable list of integers, empty.
+## @param {*[]int} intListNullable - A nullable list of integers, empty.
 intListNullable:
 
-## @param stringListNullable {*[]string} A nullable list of strings, empty.
+## @param {*[]string} stringListNullable - A nullable list of strings, empty.
 stringListNullable:
 `
 	table := renderTableFromValues(t, yamlContent)
@@ -339,9 +359,13 @@ stringListNullable:
 
 func TestValidationUnknownField(t *testing.T) {
 	yamlContent := `
-## @param foo {foo} Foo object
-## @field foo.db {fooDB} Database
-## @field fooDB.size {string} Size
+## @typedef {struct} FooDB - FooDB configuration
+## @field {string} size - Size
+
+## @typedef {struct} Foo - Foo configuration
+## @field {FooDB} db - Database
+
+## @param {Foo} foo - Foo object
 foo:
   db:
     sie: 10Gi
@@ -354,7 +378,7 @@ foo:
 	for _, s := range meta.Sections {
 		params = append(params, s.Parameters...)
 	}
-	err := validateValues(params, typeFields, vals)
+	err := validateValues(params, typeFields, vals, meta.KnownTypes)
 	if err == nil || !strings.Contains(err.Error(), "foo.db.sie") {
 		t.Errorf("expected error about unknown field foo.db.sie, got: %v", err)
 	}
@@ -363,12 +387,26 @@ foo:
 func TestNestedFieldAnnotations(t *testing.T) {
 	yamlContent := `
 ## @section Alerta configuration
-## @param alerta {alerta} Configuration for Alerta
-## @field alerta.storage {string} Persistent Volume size for alerta database
-## @field alerta.storageClassName {string} StorageClass used to store the data
-## @field alerta.resources {*alertaResources} Resources configuration for alerta
-## @field alertaResources.limits {*resources} Resources limits for alerta
-## @field alertaResources.requests {*resources} Resources requests for alerta
+
+## @typedef {struct} TelegramAlerts - Telegram alerts configuration
+## @field {string} token - Telegram token for your bot
+## @field {string} chatID - Specify multiple ID's separated by comma
+## @field {string} disabledSeverity - List of severity without alerts
+
+## @typedef {struct} Alerts - Alerts configuration
+## @field {TelegramAlerts} telegram - Configuration for Telegram alerts
+
+## @typedef {struct} AlertaResources - Alerta resources configuration
+## @field {*Resources} limits - Resources limits for alerta
+## @field {*Resources} requests - Resources requests for alerta
+
+## @typedef {struct} Alerta - Alerta configuration
+## @field {string} storage - Persistent Volume size for alerta database
+## @field {string} storageClassName - StorageClass used to store the data
+## @field {*AlertaResources} resources - Resources configuration for alerta
+## @field {Alerts} alerts - Configuration for alerts
+
+## @param {Alerta} alerta - Configuration for Alerta
 alerta:
   storage: 10Gi
   storageClassName: ""
@@ -380,12 +418,7 @@ alerta:
       cpu: 100m
       memory: 256Mi
   alerts:
-    ## @field alerta.alerts {alerts} Configuration for alerts
-    ## @field alerts.telegram {telegramAlerts} Configuration for Telegram alerts
     telegram:
-      ## @field telegramAlerts.token {string} Telegram token for your bot
-      ## @field telegramAlerts.chatID {string} Specify multiple ID's separated by comma
-      ## @field telegramAlerts.disabledSeverity {string} List of severity without alerts
       token: "abc"
       chatID: "123"
       disabledSeverity: "warn"
@@ -424,7 +457,7 @@ func TestNormalizeTypePrimitives(t *testing.T) {
 
 func TestParamWithoutDescription(t *testing.T) {
 	yaml := `
-## @param foo {string}
+## @param {string} foo
 foo: ""
 `
 	path := writeTempFile(t, yaml)
@@ -439,8 +472,10 @@ foo: ""
 
 func TestAliasObjectDisplaysEmptyBraces(t *testing.T) {
 	yaml := `
-## @param foaao {asdaa}
-## @field foaao.foaa {int64} some field
+## @typedef {struct} Asdaa - Asdaa type
+## @field {int64} foaa - some field
+
+## @param {Asdaa} foaao
 foaao:
   aaa: 1
 `
@@ -451,9 +486,11 @@ foaao:
 
 func TestPointerObjectDefaultsToNull(t *testing.T) {
 	yaml := `
-## @param storages {[]storage} list
-## @field storage.name {string} name
-## @field storage.resources {*resources} nested ptr object
+## @typedef {struct} Storage - Storage configuration
+## @field {string} name - name
+## @field {*Resources} resources - nested ptr object
+
+## @param {[]Storage} storages - list
 storages:
 - name: s1
 `
@@ -465,18 +502,24 @@ storages:
 func TestMapStringObjectDefaultsRenderAndValidate(t *testing.T) {
 	yamlContent := `
 ## @section Application-specific parameters
-## @param nodeGroups {map[string]node} Worker nodes configuration
-## @field node {node} Node configuration
-## @field node.minReplicas {int} Minimum amount of replicas
-## @field node.maxReplicas {int} Maximum amount of replicas
-## @field node.instanceType {string} Virtual machine instance type
-## @field node.ephemeralStorage {quantity} Ephemeral storage size
-## @field node.roles {[]string} List of node's roles
-## @field node.resources {resources} Available resources for each worker node
-## @field resources.cpu {*quantity} Available CPU
-## @field resources.memory {*quantity} Available memory (RAM)
-## @field node.gpus {[]gpu} List of GPUs to attach
-## @field gpu.name {string} Name of GPU
+
+## @typedef {struct} Gpu - GPU configuration
+## @field {string} name - Name of GPU
+
+## @typedef {struct} Resources - Resources configuration
+## @field {*quantity} cpu - Available CPU
+## @field {*quantity} memory - Available memory (RAM)
+
+## @typedef {struct} Node - Node configuration
+## @field {int} minReplicas - Minimum amount of replicas
+## @field {int} maxReplicas - Maximum amount of replicas
+## @field {string} instanceType - Virtual machine instance type
+## @field {quantity} ephemeralStorage - Ephemeral storage size
+## @field {[]string} roles - List of node's roles
+## @field {Resources} resources - Available resources for each worker node
+## @field {[]Gpu} gpus - List of GPUs to attach
+
+## @param {map[string]Node} nodeGroups - Worker nodes configuration
 nodeGroups:
   md0:
     minReplicas: 0
@@ -506,7 +549,7 @@ nodeGroups:
 		params = append(params, s.Parameters...)
 	}
 
-	require.NoError(t, validateValues(params, typeFields, vals))
+	require.NoError(t, validateValues(params, typeFields, vals, meta.KnownTypes))
 
 	// README table renders `{...}` for map[string]object
 	table := renderTableFromValues(t, yamlContent)
@@ -517,11 +560,13 @@ nodeGroups:
 
 func TestUnknownComplexTypesAreRejected(t *testing.T) {
 	yamlContent := `
-## @param config {config} NATS configuration
+## @typedef {struct} Config - Config configuration
+## @field {*Merge} merge - Additional config
+## @field {Resolver} resolver - Additional resolver config
+
+## @param {Config} config - NATS configuration
 config:
-  ## @field config.merge {*merge} Additional config
   merge: {}
-  ## @field config.resolver {resolver} Additional resolver config
   resolver: {}
 `
 	path := writeTempFile(t, yamlContent)
@@ -538,18 +583,20 @@ config:
 		params = append(params, s.Parameters...)
 	}
 
-	err = validateValues(params, typeFields, vals)
+	err = validateValues(params, typeFields, vals, meta.KnownTypes)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "type 'merge' referenced at 'config.merge' has no schema")
+	require.Contains(t, err.Error(), "type 'Merge' referenced at 'config.merge' has no schema")
 }
 
 func TestObjectAliasAllowsFreeForm(t *testing.T) {
 	yamlContent := `
-## @param config {config} NATS configuration
+## @typedef {struct} Config - Config configuration
+## @field {object} merge - Additional config
+## @field {object} resolver - Additional resolver config
+
+## @param {Config} config - NATS configuration
 config:
-  ## @field config.merge {object} Additional config
   merge: {}
-  ## @field config.resolver {object} Additional resolver config
   resolver: {}
 `
 	path := writeTempFile(t, yamlContent)
@@ -566,26 +613,34 @@ config:
 		params = append(params, s.Parameters...)
 	}
 
-	require.NoError(t, validateValues(params, typeFields, vals))
+	require.NoError(t, validateValues(params, typeFields, vals, meta.KnownTypes))
 }
 
 func TestSourceUploadSchemaFromTopBlock(t *testing.T) {
 	yamlContent := `
 ## @section Common parameters
-## @param source {source} The source image location used to create a disk
-## @field source.image {*uploadImage} Use image by name
-## @field uploadImage.name {string} Name of the image to use
-## @field source.upload {*emptyobject} Upload local image
-## @field source.http {*uploadHTTP} Download image from an HTTP source
-## @field uploadHTTP.url {string} URL to download the image
 
+## @typedef {struct} UploadImage - Upload image configuration
+## @field {string} name - Name of the image to use
+
+## @typedef {struct} Emptyobject - Empty object
+	
+## @typedef {struct} UploadHTTP - Upload HTTP configuration
+## @field {string} url - URL to download the image
+
+## @typedef {struct} Source - Source configuration
+## @field {*UploadImage} image - Use image by name
+## @field {*Emptyobject} upload - Upload local image
+## @field {*UploadHTTP} http - Download image from an HTTP source
+
+## @param {Source} source - The source image location used to create a disk
 source: {}
 
-## @param optical {bool} Defines if disk should be considered optical
+## @param {bool} optical - Defines if disk should be considered optical
 optical: false
 
-## @param storage {quantity} The size of the disk allocated for the virtual machine
-## @param storageClass {string} StorageClass used to store the data
+## @param {quantity} storage - The size of the disk allocated for the virtual machine
+## @param {string} storageClass - StorageClass used to store the data
 storage: 5Gi
 storageClass: replicated
 `
@@ -604,7 +659,7 @@ storageClass: replicated
 	}
 
 	// validate should pass: 'source' type schema is known
-	require.NoError(t, validateValues(params, typeFields, vals))
+	require.NoError(t, validateValues(params, typeFields, vals, meta.KnownTypes))
 
 	// rendered table should show object for emptyobject and nested fields
 	table := renderTableFromValues(t, yamlContent)
@@ -621,15 +676,17 @@ storageClass: replicated
 func TestNoDuplicateFields(t *testing.T) {
 	yamlContent := `
 ## @section Example
-## @param storage {storage} Storage root
-## @field storage.requests {*resources} Requests
-## @field storage.limits {*resources} Limits
-## @field resources.cpu {*quantity} CPU
-## @field resources.memory {*quantity} Memory
 
+## @typedef {struct} Resources - Resources configuration
+## @field {*quantity} cpu - CPU
+## @field {*quantity} memory - Memory
+
+## @typedef {struct} Storage - Storage configuration
+## @field {*Resources} requests - Requests
+## @field {*Resources} limits - Limits
+
+## @param {Storage} storage - Storage root
 storage:
-  ## @field storage.requests {*resources} Requests
-  ## @field storage.limits {*resources} Limits
   requests:
     cpu: "200m"
     memory: "256Mi"
@@ -653,9 +710,13 @@ storage:
 
 func TestPointerToSliceOfObjectsRenderedAndTraversed(t *testing.T) {
 	yaml := `
-## @param node {node} Node configuration
-## @field node.gpus {*[]gpu} GPUs (optional)
-## @field gpu.name {string} Name
+## @typedef {struct} Gpu - GPU configuration
+## @field {string} name - Name
+
+## @typedef {struct} Node - Node configuration
+## @field {*[]Gpu} gpus - GPUs (optional)
+
+## @param {Node} node - Node configuration
 node:
   gpus: []
 `
@@ -672,15 +733,23 @@ node:
 func TestPointerObjectAlwaysNullEvenWhenProvided(t *testing.T) {
 	yaml := `
 ## @section Example
-## @param alerta {alerta} Alerta
-## @field alerta.resources {*resources} Resources configuration
-## @field resources.requests {*request}
-## @field resources.limits {*limit}
-## @field request.cpu {*quantity}
-## @field request.memory {*quantity}
-## @field limit.cpu {*quantity}
-## @field limit.memory {*quantity}
 
+## @typedef {struct} Request - Request configuration
+## @field {*quantity} cpu
+## @field {*quantity} memory
+
+## @typedef {struct} Limit - Limit configuration
+## @field {*quantity} cpu
+## @field {*quantity} memory
+
+## @typedef {struct} Resources - Resources configuration
+## @field {*Request} requests
+## @field {*Limit} limits
+
+## @typedef {struct} Alerta - Alerta configuration
+## @field {*Resources} resources - Resources configuration
+
+## @param {Alerta} alerta - Alerta
 alerta:
   resources:
     requests:
@@ -705,15 +774,16 @@ alerta:
 
 func TestExplicitDefaultAnnotationRawObject(t *testing.T) {
 	yamlContent := `
-## @param nodeGroups {map[string]nodeGroup} Worker nodes configuration
-## @field nodeGroup {nodeGroup} Node configuration
-## @field nodeGroup.minReplicas {int default=0} Minimum amount of replicas
-## @field nodeGroup.maxReplicas {int default=10} Maximum amount of replicas
-## @field nodeGroup.instanceType {string default="u1.medium"} Virtual machine instance type
-## @field nodeGroup.ephemeralStorage {quantity default="20Gi"} Ephemeral storage size
-## @field nodeGroup.roles {[]string default=[]} List of node's roles
-## @field nodeGroup.resources {resources default={}} Resources available to each worker node
-## @field nodeGroup.gpus {[]gpu default={"name":"nvidia.com/AD102GL_L40S"}} GPUs
+## @typedef {struct} NodeGroup - Node group configuration
+## @field {int} minReplicas=0 - Minimum amount of replicas
+## @field {int} maxReplicas=10 - Maximum amount of replicas
+## @field {string} instanceType="u1.medium" - Virtual machine instance type
+## @field {quantity} ephemeralStorage="20Gi" - Ephemeral storage size
+## @field {[]string} roles=[] - List of node's roles
+## @field {Resources} resources={} - Resources available to each worker node
+## @field {[]Gpu} gpus={"name":"nvidia.com/AD102GL_L40S"} - GPUs
+
+## @param {map[string]NodeGroup} nodeGroups - Worker nodes configuration
 nodeGroups: {}
 `
 	table := renderTableFromValues(t, yamlContent)
@@ -736,8 +806,10 @@ nodeGroups: {}
 
 func TestExplicitDefaultEmptyObject(t *testing.T) {
 	yamlContent := `
-## @param backup {backup} Backup configuration
-## @field backup.settings {object default={}} Freeform settings
+## @typedef {struct} Backup - Backup configuration
+## @field {object} settings={} - Freeform settings
+
+## @param {Backup} backup - Backup configuration
 backup: {}
 `
 	table := renderTableFromValues(t, yamlContent)

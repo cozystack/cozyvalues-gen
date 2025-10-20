@@ -1,25 +1,35 @@
 ## @section Common parameters
 
-## @param host {string} The hostname used to access the grafana externally (defaults to 'grafana' subdomain for the tenant host).
+## @param {string} host - The hostname used to access the grafana externally (defaults to 'grafana' subdomain for the tenant host).
 host: ""
 
-## @param metricsStorages {[]metricsStorage} Configuration of metrics storage instances
-## @field metricsStorage.name {string} Name of the storage instance
-## @field metricsStorage.retentionPeriod {string} Retention period for the metrics in the storage instance
-## @field metricsStorage.deduplicationInterval {string} Deduplication interval for the metrics in the storage instance
-## @field metricsStorage.storage {string} Persistent Volume size for the storage instance
-## @field metricsStorage.storageClassName {*string} StorageClass used to store the data
-## @field metricsStorage.vminsert {*vminsert} Configuration for vminsert component of the storage instance
-## @field metricsStorage.vmselect {*vmselect} Configuration for vmselect component of the storage instance
-## @field metricsStorage.vmstorage {*vmstorage} Configuration for vmstorage component of the storage instance
-## @field vminsert.minAllowed {*resources} Minimum allowed resources for vminsert component
-## @field vminsert.maxAllowed {*resources} Maximum allowed resources for vminsert component
-## @field vmselect.minAllowed {*resources} Minimum allowed resources for vminsert component
-## @field vmselect.maxAllowed {*resources} Maximum allowed resources for vminsert component
-## @field vmstorage.minAllowed {*resources} Minimum allowed resources for vminsert component
-## @field vmstorage.maxAllowed {*resources} Maximum allowed resources for vminsert component
-## @field resources.cpu {*quantity} CPU resources
-## @field resources.memory {*quantity} Memory resources
+## @typedef {struct} Resources - Resource configuration
+## @field {*quantity} cpu - CPU resources
+## @field {*quantity} memory - Memory resources
+
+## @typedef {struct} Vminsert - VMInsert configuration
+## @field {*Resources} minAllowed - Minimum allowed resources for vminsert component
+## @field {*Resources} maxAllowed - Maximum allowed resources for vminsert component
+
+## @typedef {struct} Vmselect - VMSelect configuration
+## @field {*Resources} minAllowed - Minimum allowed resources for vmselect component
+## @field {*Resources} maxAllowed - Maximum allowed resources for vmselect component
+
+## @typedef {struct} Vmstorage - VMStorage configuration
+## @field {*Resources} minAllowed - Minimum allowed resources for vmstorage component
+## @field {*Resources} maxAllowed - Maximum allowed resources for vmstorage component
+
+## @typedef {struct} MetricsStorage - Metrics storage configuration
+## @field {string} name - Name of the storage instance
+## @field {string} retentionPeriod - Retention period for the metrics in the storage instance
+## @field {string} deduplicationInterval - Deduplication interval for the metrics in the storage instance
+## @field {string} storage - Persistent Volume size for the storage instance
+## @field {*string} storageClassName - StorageClass used to store the data
+## @field {*Vminsert} vminsert - Configuration for vminsert component of the storage instance
+## @field {*Vmselect} vmselect - Configuration for vmselect component of the storage instance
+## @field {*Vmstorage} vmstorage - Configuration for vmstorage component of the storage instance
+
+## @param {[]MetricsStorage} metricsStorages - Configuration of metrics storage instances
 ##
 ## Example:
 ## metricsStorages:
@@ -62,26 +72,38 @@ metricsStorages:
   storage: 10Gi
   storageClassName: ""
 
-## @param logsStorages {[]logsStorage} Configuration of logs storage instances
-## @field logsStorage.name {string} Name of the storage instance
-## @field logsStorage.retentionPeriod {string} Retention period for the logs in the storage instance
-## @field logsStorage.storage {string} Persistent Volume size for the storage instance
-## @field logsStorage.storageClassName {*string} StorageClass used to store the data
-##
+## @typedef {struct} LogsStorage - Logs storage configuration
+## @field {string} name - Name of the storage instance
+## @field {string} retentionPeriod - Retention period for the logs in the storage instance
+## @field {string} storage - Persistent Volume size for the storage instance
+## @field {*string} storageClassName - StorageClass used to store the data
+
+## @param {[]LogsStorage} logsStorages - Configuration of logs storage instances
 logsStorages:
 - name: generic
   retentionPeriod: "1"
   storage: 10Gi
   storageClassName: replicated
 
-## Configuration for Alerta
-## @param alerta {alerta} Configuration for Alerta
-## @field alerta.storage {string} Persistent Volume size for alerta database
-## @field alerta.storageClassName {string} StorageClass used to store the data
-## @field alerta.resources {*alertaResources} Resources configuration for alerta
-## @field alertaResources.limits {*resources} Resources limits for alerta
-## @field alertaResources.requests {*resources} Resources requests for alerta
-##
+## @typedef {struct} TelegramAlerts - Telegram alerts configuration
+## @field {string} token - Telegram token for your bot
+## @field {string} chatID - Specify multiple ID's separated by comma. Get yours in https://t.me/chatid_echo_bot
+## @field {string} disabledSeverity - List of severity without alerts, separated by comma like: "informational,warning"
+
+## @typedef {struct} Alerts - Alerts configuration
+## @field {TelegramAlerts} telegram - Configuration for Telegram alerts
+
+## @typedef {struct} AlertaResources - Alerta resources configuration
+## @field {*Resources} limits - Resources limits for alerta
+## @field {*Resources} requests - Resources requests for alerta
+
+## @typedef {struct} Alerta - Alerta configuration
+## @field {string} storage - Persistent Volume size for alerta database
+## @field {string} storageClassName - StorageClass used to store the data
+## @field {*AlertaResources} resources - Resources configuration for alerta
+## @field {Alerts} alerts - Configuration for alerts
+
+## @param {Alerta} alerta - Configuration for Alerta
 alerta:
   storage: 10Gi
   storageClassName: ""
@@ -93,29 +115,23 @@ alerta:
       cpu: 100m
       memory: 256Mi
   alerts:
-    ## @field alerta.alerts {alerts} Configuration for alerts
-    ## @field alerts.telegram {telegramAlerts} Configuration for Telegram alerts
-    ## @field telegramAlerts.token {string} Telegram token for your bot
-    ## @field telegramAlerts.chatID {string} Specify multiple ID's separated by comma. Get yours in https://t.me/chatid_echo_bot
-    ## @field telegramAlerts.disabledSeverity {string} List of severity without alerts, separated by comma like: "informational,warning"
-    ## example:
-    ##   telegram:
-    ##     token: "7262461387:AAGtwq16iwuVtWtzoN6TUEMpF00fpC9Xz34"
-    ##     chatID: "-4520856007"
-    ##     disabledSeverity: "informational,warning"
-    ##
     telegram:
       token: ""
       chatID: ""
       disabledSeverity: ""
 
-## Configuration for Grafana
-## @param grafana {grafana} Configuration for Grafana
-## @field grafana.db {grafanaDB}
-## @field grafanaDB.size {string} Persistent Volume size for grafana database
-## @field grafana.resources {*grafanaResources} Resources configuration for grafana
-## @field grafanaResources.limits {*resources} Resources limits for grafana
-## @field grafanaResources.requests {*resources} Resources requests for grafana
+## @typedef {struct} GrafanaDB - Grafana database configuration
+## @field {string} size - Persistent Volume size for grafana database
+
+## @typedef {struct} GrafanaResources - Grafana resources configuration
+## @field {*Resources} limits - Resources limits for grafana
+## @field {*Resources} requests - Resources requests for grafana
+
+## @typedef {struct} Grafana - Grafana configuration
+## @field {GrafanaDB} db - Database configuration
+## @field {*GrafanaResources} resources - Resources configuration for grafana
+
+## @param {Grafana} grafana - Configuration for Grafana
 grafana:
   db:
     size: 10Gi

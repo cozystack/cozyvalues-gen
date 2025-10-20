@@ -15,7 +15,7 @@ import (
 )
 
 const monitoringYAML = `
-## @param host {string} The hostname used to access the grafana externally
+## @param {string} host - The hostname used to access the grafana externally
 host: ""
 `
 
@@ -78,27 +78,29 @@ parent:
     field: value
 `
 	rows := []Raw{
-		{K: kParam, Path: []string{"parent"}, TypeExpr: "parent"},
-		{K: kField, Path: []string{"parent", "child"}, TypeExpr: "child"},
-		{K: kField, Path: []string{"child", "field"}, TypeExpr: "string"},
+		{K: kTypedef, Path: []string{"Child"}, TypeExpr: "struct", Description: ""},
+		{K: kField, Path: []string{"Child", "field"}, TypeExpr: "string", Description: ""},
+		{K: kTypedef, Path: []string{"Parent"}, TypeExpr: "struct", Description: ""},
+		{K: kField, Path: []string{"Parent", "child"}, TypeExpr: "Child", Description: ""},
+		{K: kParam, Path: []string{"parent"}, TypeExpr: "Parent", Description: ""},
 	}
 	root := Build(rows)
 	var parsed interface{}
 	require.NoError(t, yaml.Unmarshal([]byte(yamlData), &parsed))
-	aliases := map[string]*Node{"parent": root.Child["parent"], "child": root.Child["child"]}
+	aliases := map[string]*Node{"Parent": root.Child["Parent"], "Child": root.Child["Child"]}
 	PopulateDefaults(root, parsed, aliases)
 
 	// object field default collapsed to {}
-	require.Equal(t, "{}", root.Child["parent"].Child["child"].DefaultVal)
+	require.Equal(t, "{}", root.Child["parent"].DefaultVal)
 
 	// nested field default propagated to the alias type
-	require.Contains(t, root.Child["child"].Child, "field")
-	require.Equal(t, "value", root.Child["child"].Child["field"].DefaultVal)
+	require.Contains(t, root.Child["Child"].Child, "field")
+	require.Equal(t, "value", root.Child["Child"].Child["field"].DefaultVal)
 }
 
 func TestCollectUndefined(t *testing.T) {
 	rows := []Raw{
-		{K: kParam, Path: []string{"a"}, TypeExpr: "customType"},
+		{K: kParam, Path: []string{"a"}, TypeExpr: "customType", Description: ""},
 	}
 	root := Build(rows)
 	undef := CollectUndefined(root)
@@ -118,9 +120,11 @@ func TestCamelCaseConversion(t *testing.T) {
 
 func TestArrayWithDefaultsInOpenAPI(t *testing.T) {
 	yamlContent := `
-## @param metricsStorages {[]metricsStorage} Metrics storage
-## @field metricsStorage.name {string default="5m"} Name
-## @field metricsStorage.retentionPeriod {string} Retention
+## @typedef {struct} MetricsStorage - Metrics storage configuration
+## @field {string} name="5m" - Name
+## @field {string} retentionPeriod - Retention
+
+## @param {[]MetricsStorage} metricsStorages - Metrics storage
 metricsStorages:
 - name: shortterm
   retentionPeriod: "3d"
@@ -151,18 +155,24 @@ metricsStorages:
 
 func TestComplexNestedTypes(t *testing.T) {
 	yamlContent := `
-## @field emptyDir.placeholder {string}  # declare alias, no real fields
-## @param metricsStorages {[]metricsStorage} Metrics storage
-## @field metricsStorage.name {string} Name
-## @field metricsStorage.retentionPeriod {string default="5m"} Retention
+## @typedef {struct} EmptyDir - Empty directory
+## @field {string} placeholder - Placeholder
+
+## @typedef {struct} MetricsStorage - Metrics storage configuration
+## @field {string} name - Name
+## @field {string} retentionPeriod="5m" - Retention
+
+## @typedef {struct} Bar - Bar configuration
+## @field {EmptyDir} emptyDir - Empty directory configuration
+
+## @param {[]MetricsStorage} metricsStorages - Metrics storage
 metricsStorages:
 - name: shortterm
   retentionPeriod: "3d"
 - name: longterm
   retentionPeriod: "14d"
 
-## @param foo {bar}
-## @field bar.emptyDir {emptyDir} Empty directory configuration
+## @param {Bar} foo
 foo:
   emptyDir: {}
 `
@@ -249,9 +259,11 @@ func extractTypeRefs(code string) map[string]bool {
 
 func TestNoUnusedOrMissingStructs(t *testing.T) {
 	yamlContent := `
-## @param metricsStorages {[]metricsStorage} Metrics storage
-## @field metricsStorage.name {string} Name
-## @field metricsStorage.retentionPeriod {string} Retention
+## @typedef {struct} MetricsStorage - Metrics storage
+## @field {string} name - Name
+## @field {string} retentionPeriod - Retention
+
+## @param {[]MetricsStorage} metricsStorages - Metrics storage
 metricsStorages:
 - name: shortterm
   retentionPeriod: "3d"
@@ -300,7 +312,7 @@ func TestIsStringFormat(t *testing.T) {
 
 func TestEmitFieldAddsFormatAnnotation(t *testing.T) {
 	const valuesYAML = `
-## @param serverHost {hostname} public host
+## @param {hostname} serverHost - public host
 serverHost: "grafana.example.com"
 `
 	rows, err := Parse(writeTempFile(valuesYAML))
@@ -322,7 +334,7 @@ serverHost: "grafana.example.com"
 
 func TestSchemaContainsStringFormat(t *testing.T) {
 	const yamlContent = `
-## @param apiURL {uri} External URL
+## @param {uri} apiURL - External URL
 apiURL: ""
 `
 	tmpValues := writeTempFile(yamlContent)
@@ -375,8 +387,8 @@ func TestResolveSpecialAliases(t *testing.T) {
 
 func TestCollectUndefinedWithFormats(t *testing.T) {
 	rows := []Raw{
-		{K: kParam, Path: []string{"email"}, TypeExpr: "email"},
-		{K: kParam, Path: []string{"host"}, TypeExpr: "hostname"},
+		{K: kParam, Path: []string{"email"}, TypeExpr: "email", Description: ""},
+		{K: kParam, Path: []string{"host"}, TypeExpr: "hostname", Description: ""},
 	}
 	root := Build(rows)
 	require.Empty(t, CollectUndefined(root))
@@ -384,9 +396,9 @@ func TestCollectUndefinedWithFormats(t *testing.T) {
 
 func TestNoAliasStructsGenerated(t *testing.T) {
 	const valuesYAML = `
-## @param size {quantity} disk size
+## @param {quantity} size - disk size
 size: "4Gi"
-## @param ttl {duration} ttl for job
+## @param {duration} ttl - ttl for job
 ttl: "5m"
 `
 
@@ -419,8 +431,10 @@ ttl: "5m"
 
 func TestAliasFieldResolution(t *testing.T) {
 	const yamlContent = `
-## @param foaao {asdaa}
-## @field foaao.foaa {int64}
+## @typedef {struct} Asdaa - Asdaa type
+## @field {int64} foaa
+
+## @param {Asdaa} foaao
 foaao:
   aaa: 1
 `
@@ -441,11 +455,13 @@ foaao:
 
 func TestObjectAliases(t *testing.T) {
 	const yaml = `
-## @field emptyobject.placeholder {string}  # declare alias, no real fields
-## @param rawData {object} arbitrary JSON
+## @typedef {struct} Emptyobject - Empty object type
+## @field {string} placeholder
+
+## @param {object} rawData - arbitrary JSON
 rawData: {}
 
-## @param cfg {emptyobject} nothing inside
+## @param {Emptyobject} cfg - nothing inside
 cfg: {}
 `
 	rows, _ := Parse(writeTempFile(yaml))
@@ -490,7 +506,7 @@ cfg: {}
 
 func TestUndefinedTypeReference(t *testing.T) {
 	const yaml = `
-## @param foo {Bar} reference to undeclared type
+## @param {Bar} foo - reference to undeclared type
 foo: {}
 `
 	rows, _ := Parse(writeTempFile(yaml))
@@ -503,9 +519,11 @@ foo: {}
 
 func TestDefinedTypeNoError(t *testing.T) {
 	const yaml = `
-## @param foo {Bar}
+## @typedef {struct} Bar - Bar type
+## @field {string} baz
+
+## @param {Bar} foo
 foo: {}
-## @field Bar.baz {string}
 `
 	rows, err := Parse(writeTempFile(yaml))
 	require.NoError(t, err)
@@ -519,11 +537,13 @@ foo: {}
 
 func TestUnknownComplexTypesInFieldAreRejected(t *testing.T) {
 	const yaml = `
-## @param config {config}
+## @typedef {struct} Config - Config type
+## @field {*Merge} merge
+## @field {Resolver} resolver
+
+## @param {Config} config
 config:
-  ## @field config.merge {*merge}
   merge: {}
-  ## @field config.resolver {resolver}
   resolver: {}
 `
 	tmp := writeTempFile(yaml)
@@ -535,17 +555,19 @@ config:
 
 	_, _, err = (&gen{pkg: "values"}).Generate(root)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "merge")
-	require.Contains(t, err.Error(), "resolver")
+	require.Contains(t, err.Error(), "Merge")
+	require.Contains(t, err.Error(), "Resolver")
 }
 
 func TestObjectFieldsAreAllowedFreeFormInOpenAPI(t *testing.T) {
 	const yaml = `
-## @param config {config}
+## @typedef {struct} Config - Config type
+## @field {object} merge
+## @field {object} resolver
+
+## @param {Config} config
 config:
-  ## @field config.merge {object}
   merge: {}
-  ## @field config.resolver {object}
   resolver: {}
 `
 	tmp := writeTempFile(yaml)
@@ -587,7 +609,7 @@ config:
 
 func TestMapStringUnknownValueTypeIsRejected(t *testing.T) {
 	const yaml = `
-## @param labels {map[string]label}
+## @param {map[string]Label} labels
 labels:
   app:
     key: value
@@ -601,12 +623,12 @@ labels:
 
 	_, _, err = (&gen{pkg: "values"}).Generate(root)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "label")
+	require.Contains(t, err.Error(), "Label")
 }
 
 func TestMapStringObjectIsAllowed(t *testing.T) {
 	const yaml = `
-## @param labels {map[string]object}
+## @param {map[string]object} labels
 labels:
   app:
     tier: web
@@ -643,14 +665,16 @@ labels:
 
 func TestUserTypeNamedConfigDoesNotClashAndMapStringObjectStillWorks(t *testing.T) {
 	const yaml = `
-## @param config {config}
+## @typedef {struct} Config - Config type
+## @field {object} merge
+## @field {object} resolver
+
+## @param {Config} config
 config:
-  ## @field config.merge {object}
   merge: {}
-  ## @field config.resolver {object}
   resolver: {}
 
-## @param labels {map[string]object}
+## @param {map[string]object} labels
 labels:
   app:
     tier: web
@@ -712,17 +736,23 @@ labels:
 
 func TestPointerSliceElementTypeIsCamelled(t *testing.T) {
 	const yamlContent = `
-## @param nodeGroups {map[string]node} Worker nodes configuration
-## @field node.minReplicas {int} Minimum amount of replicas
-## @field node.maxReplicas {int} Maximum amount of replicas
-## @field node.instanceType {string} Virtual machine instance type
-## @field node.ephemeralStorage {quantity} Ephemeral storage size
-## @field node.roles {[]string} List of node's roles
-## @field node.resources {resources} Resources available to each worker node
-## @field resources.cpu {*quantity} CPU available to each worker node
-## @field resources.memory {*quantity} Memory (RAM) available to each worker node
-## @field node.gpus {*[]gpu} List of GPUs to attach
-## @field gpu.name {string} Name of GPU
+## @typedef {struct} Gpu - GPU configuration
+## @field {string} name - Name of GPU
+
+## @typedef {struct} Resources - Resources configuration
+## @field {*quantity} cpu - CPU available to each worker node
+## @field {*quantity} memory - Memory (RAM) available to each worker node
+
+## @typedef {struct} Node - Node configuration
+## @field {int} minReplicas - Minimum amount of replicas
+## @field {int} maxReplicas - Maximum amount of replicas
+## @field {string} instanceType - Virtual machine instance type
+## @field {quantity} ephemeralStorage - Ephemeral storage size
+## @field {[]string} roles - List of node's roles
+## @field {Resources} resources - Resources available to each worker node
+## @field {*[]Gpu} gpus - List of GPUs to attach
+
+## @param {map[string]Node} nodeGroups - Worker nodes configuration
 nodeGroups:
   md0:
     minReplicas: 0
@@ -749,15 +779,22 @@ nodeGroups:
 
 func TestAnnotationDefaultRawJSON(t *testing.T) {
 	const yamlContent = `
-## @param nodeGroups {map[string]node} Worker nodes configuration
-## @field node.minReplicas {int default=0}
-## @field node.maxReplicas {int default=10}
-## @field node.instanceType {string default="u1.medium"}
-## @field node.ephemeralStorage {quantity default="20Gi"}
-## @field node.roles {[]string default={}}
-## @field node.resources {resources default={}}
-## @field node.gpus {[]gpu default={"name":"nvidia.com/AD102GL_L40S"}}
-## @field gpu.name {string}
+## @typedef {struct} Gpu - GPU configuration
+## @field {string} name
+
+## @typedef {struct} Resources - Resources configuration
+## @field {*quantity} cpu
+
+## @typedef {struct} Node - Node configuration
+## @field {int} minReplicas=0
+## @field {int} maxReplicas=10
+## @field {string} instanceType="u1.medium"
+## @field {quantity} ephemeralStorage="20Gi"
+## @field {[]string} roles={}
+## @field {Resources} resources={}
+## @field {[]Gpu} gpus={"name":"nvidia.com/AD102GL_L40S"}
+
+## @param {map[string]Node} nodeGroups - Worker nodes configuration
 nodeGroups: {}
 `
 	tmpfile := writeTempFile(yamlContent)
@@ -793,8 +830,10 @@ nodeGroups: {}
 
 func TestAnnotationDefaultEmptyObject(t *testing.T) {
 	const yamlContent = `
-## @param backup {backup} Backup configuration
-## @field backup.settings {object default={}} Freeform settings
+## @typedef {struct} Backup - Backup configuration
+## @field {object} settings={} - Freeform settings
+
+## @param {Backup} backup - Backup configuration
 backup: {}
 `
 	tmpfile := writeTempFile(yamlContent)
@@ -822,16 +861,20 @@ backup: {}
 
 func TestResourcesSchemaKeepsCpuAndMemory(t *testing.T) {
 	const yaml = `
-## @param controlPlane {controlPlane}
+## @typedef {struct} Resources - Resources configuration
+## @field {*quantity} cpu - CPU available
+## @field {*quantity} memory - Memory available
+
+## @typedef {struct} ApiServer - API Server configuration
+## @field {Resources} resources
+
+## @typedef {struct} ControlPlane - Control Plane configuration
+## @field {ApiServer} apiServer
+
+## @param {ControlPlane} controlPlane
 controlPlane:
   apiServer:
     resources: {}
-
-## @field controlPlane.apiServer {apiServer}
-## @field apiServer.resources {resources}
-
-## @field resources.cpu {*quantity} CPU available
-## @field resources.memory {*quantity} Memory available
 `
 	tmp := writeTempFile(yaml)
 	defer os.Remove(tmp)

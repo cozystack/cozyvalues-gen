@@ -30,6 +30,8 @@ type kind int
 const (
 	kParam kind = iota
 	kField
+	kTypedef
+	kEnum
 )
 
 const (
@@ -50,16 +52,25 @@ type Raw struct {
 	Enums       []string
 	DefaultVal  string
 	Description string
+	OmitEmpty   bool // Field marked with [name] for omitempty
 }
 
+// JSDoc-like syntax patterns
 var (
-	re       = regexp.MustCompile(`^#{1,}\s+@(param|field)\s+([^\s]+)\s+\{(.+)\}\s*(.*)$`)
-	reAttr   = regexp.MustCompile(`(\w+):"([^"]*)"`)
-	reYamlKV = regexp.MustCompile(`^\s*([A-Za-z0-9_-]+)\s*:\s*(.+?)\s*$`)
-	// []foo, []*foo, []mypkg.Foo …
-	reSlice = regexp.MustCompile(`^\s*$begin:math:display$$end:math:display$\s*(\*?[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*$`)
-	// map[string]foo, map[string]*foo …
-	reMap = regexp.MustCompile(`^\s*map\s*$begin:math:display$\\s*string\\s*$end:math:display$\s*(\*?[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*$`)
+	// Default value pattern: accepts quoted strings, JSON objects/arrays, booleans, numbers (with decimals), null, or simple tokens
+	// Matches: "foo bar", 'text', {"a":1}, [1,2], true, false, null, -3.5, 42, simpleToken
+	defaultValuePattern = `(?:"[^"]*"|'[^']*'|\{[^}]*\}|\[[^\]]*\]|true|false|null|-?\d+(?:\.\d+)?|\S+)`
+
+	// ## @param {type} name - description or ## @param {type} [name]=defaultValue - description
+	reParam = regexp.MustCompile(`^#{1,}\s+@param\s+\{([^}]+)\}\s+(\[?\w+\]?)(?:=(` + defaultValuePattern + `))?(?:\s+-\s+(.*))?$`)
+	// ## @field {type} [name] - description  or  ## @field {type} name=defaultValue - description
+	reField = regexp.MustCompile(`^#{1,}\s+@(?:field|property)\s+\{([^}]+)\}\s+(\[?\w+\]?)(?:=(` + defaultValuePattern + `))?(?:\s+-\s+(.*))?$`)
+	// ## @typedef {struct|object} TypeName - description
+	reTypedef = regexp.MustCompile(`^#{1,}\s+@typedef\s+\{(struct|object)\}\s+(\w+)(?:\s+-\s+(.*))?$`)
+	// ## @enum {type} EnumName
+	reEnum = regexp.MustCompile(`^#{1,}\s+@enum\s+\{([^}]+)\}\s+(\w+)(?:\s+-\s+(.*))?$`)
+	// ## @value valueName
+	reEnumValue = regexp.MustCompile(`^#{1,}\s+@value\s+(\w+)(?:\s+-\s+(.*))?$`)
 )
 
 // additional string-format aliases
@@ -106,63 +117,158 @@ func Parse(file string) ([]Raw, error) {
 	lines := strings.Split(string(data), "\n")
 
 	var out []Raw
-	attrRe := regexp.MustCompile(`(\w+)\s*(?:=|:)\s*(?:"([^"]*)"|(\{[^}]*\}|$begin:math:display$[^$end:math:display$]*\]|true|false|-?\d+(?:\.\d+)?))`)
+	var currentEnum *Raw
+	var enumValues []string
 
-	for i := 0; i < len(lines); i++ {
-		line := strings.TrimSpace(lines[i])
-		m := re.FindStringSubmatch(line)
-		if m == nil {
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// Check for enum value
+		if m := reEnumValue.FindStringSubmatch(line); m != nil && currentEnum != nil {
+			enumValues = append(enumValues, m[1])
 			continue
 		}
 
-		k := kParam
-		if m[1] == "field" {
-			k = kField
-		}
+		// Check for @param
+		if m := reParam.FindStringSubmatch(line); m != nil {
+			// If we were collecting enum values, finalize the enum
+			if currentEnum != nil {
+				currentEnum.Enums = enumValues
+				out = append(out, *currentEnum)
+				currentEnum = nil
+				enumValues = nil
+			}
 
-		fields := strings.Fields(strings.TrimSpace(m[3]))
-		if len(fields) == 0 {
+			typeExpr := strings.TrimSpace(m[1])
+			nameRaw := m[2]
+			name := strings.Trim(nameRaw, "[]")
+			omitEmpty := strings.HasPrefix(nameRaw, "[") && strings.HasSuffix(nameRaw, "]")
+			defaultVal := ""
+			if len(m) > 3 && m[3] != "" {
+				defaultVal = m[3]
+			}
+			desc := ""
+			if len(m) > 4 {
+				desc = m[4]
+			}
+
+			r := Raw{
+				K:           kParam,
+				Path:        []string{name},
+				TypeExpr:    typeExpr,
+				DefaultVal:  defaultVal,
+				Description: desc,
+				OmitEmpty:   omitEmpty,
+			}
+			out = append(out, r)
 			continue
 		}
-		typPart := fields[0]
-		attrPart := strings.Join(fields[1:], " ")
 
-		var enums []string
-		var def string
-		for _, am := range attrRe.FindAllStringSubmatch(attrPart, -1) {
-			key := am[1]
-			val := am[2]
-			if val == "" {
-				val = am[3]
+		// Check for @typedef
+		if m := reTypedef.FindStringSubmatch(line); m != nil {
+			// If we were collecting enum values, finalize the enum
+			if currentEnum != nil {
+				currentEnum.Enums = enumValues
+				out = append(out, *currentEnum)
+				currentEnum = nil
+				enumValues = nil
 			}
-			switch key {
-			case "enum":
-				enums = strings.Split(val, ",")
-			case "default":
-				def = val
+
+			typeName := m[2]
+			desc := ""
+			if len(m) > 3 {
+				desc = m[3]
 			}
+
+			r := Raw{
+				K:           kTypedef,
+				Path:        []string{typeName},
+				TypeExpr:    "struct",
+				Description: desc,
+			}
+			out = append(out, r)
+			continue
 		}
 
-		segments := strings.FieldsFunc(m[2], func(r rune) bool { return r == '/' || r == '.' })
-		r := Raw{
-			K:           k,
-			Path:        segments,
-			TypeExpr:    typPart,
-			Enums:       enums,
-			DefaultVal:  def,
-			Description: strings.TrimSpace(m[4]),
+		// Check for @enum
+		if m := reEnum.FindStringSubmatch(line); m != nil {
+			// If we were collecting enum values, finalize the previous enum
+			if currentEnum != nil {
+				currentEnum.Enums = enumValues
+				out = append(out, *currentEnum)
+			}
+
+			baseType := strings.TrimSpace(m[1])
+			enumName := m[2]
+			desc := ""
+			if len(m) > 3 {
+				desc = m[3]
+			}
+
+			// Start collecting enum values
+			currentEnum = &Raw{
+				K:           kEnum,
+				Path:        []string{enumName},
+				TypeExpr:    baseType,
+				Description: desc,
+			}
+			enumValues = []string{}
+			continue
 		}
 
-		if r.DefaultVal == "" && i+1 < len(lines) {
-			next := strings.TrimSpace(lines[i+1])
-			if !strings.HasPrefix(next, "##") {
-				if ym := reYamlKV.FindStringSubmatch(next); ym != nil && ym[1] == r.Path[len(r.Path)-1] {
-					r.DefaultVal = strings.Trim(ym[2], `"'`)
+		// Check for @field or @property
+		if m := reField.FindStringSubmatch(line); m != nil {
+			// If we were collecting enum values, finalize the enum
+			if currentEnum != nil {
+				currentEnum.Enums = enumValues
+				out = append(out, *currentEnum)
+				currentEnum = nil
+				enumValues = nil
+			}
+
+			typeExpr := strings.TrimSpace(m[1])
+			fieldNameRaw := m[2]
+			fieldName := strings.Trim(fieldNameRaw, "[]")
+			omitEmpty := strings.HasPrefix(fieldNameRaw, "[") && strings.HasSuffix(fieldNameRaw, "]")
+			defaultVal := ""
+			if len(m) > 3 && m[3] != "" {
+				defaultVal = m[3]
+			}
+			desc := ""
+			if len(m) > 4 {
+				desc = m[4]
+			}
+
+			// Find the parent type by looking at recent typedefs
+			var parentType string
+			for i := len(out) - 1; i >= 0; i-- {
+				if out[i].K == kTypedef {
+					parentType = out[i].Path[0]
+					break
 				}
 			}
+
+			if parentType != "" {
+				r := Raw{
+					K:           kField,
+					Path:        []string{parentType, fieldName},
+					TypeExpr:    typeExpr,
+					DefaultVal:  defaultVal,
+					Description: desc,
+					OmitEmpty:   omitEmpty,
+				}
+				out = append(out, r)
+			}
+			continue
 		}
-		out = append(out, r)
 	}
+
+	// Finalize any pending enum
+	if currentEnum != nil {
+		currentEnum.Enums = enumValues
+		out = append(out, *currentEnum)
+	}
+
 	return out, nil
 }
 
@@ -177,6 +283,7 @@ type Node struct {
 	Enums      []string
 	DefaultVal string
 	Comment    string
+	OmitEmpty  bool
 	Parent     *Node
 	Child      map[string]*Node
 }
@@ -205,44 +312,81 @@ func Build(rows []Raw) *Node {
 	}
 
 	for _, r := range rows {
-		// allow “@field <param>.<field>” even when <param> is declared with alias type
-		segments := append([]string(nil), r.Path...)
-		if r.K == kField && len(segments) > 1 {
-			if pnode, ok := root.Child[segments[0]]; ok {
-				alias := strings.TrimPrefix(strings.TrimSpace(pnode.TypeExpr), "*")
-				if alias != "" && !isPrim(alias) {
-					segments[0] = alias
-				}
-			}
+		if r.K == kTypedef {
+			// Create a node for the typedef
+			cur := ensure(root, r.Path[0])
+			cur.Comment = r.Description
+			cur.TypeExpr = "struct"
+			continue
 		}
 
-		cur := root
-		for i, seg := range segments {
-			cur = ensure(cur, seg)
-			if i == len(r.Path)-1 {
-				if r.K == kParam {
-					cur.IsParam = true
-				}
-				cur.TypeExpr = r.TypeExpr
-				cur.Comment = r.Description
-				cur.Enums = r.Enums
-				if r.DefaultVal != "" {
-					cur.DefaultVal = r.DefaultVal
-				}
-			}
+		if r.K == kEnum {
+			// Create a node for the enum with enum values
+			cur := ensure(root, r.Path[0])
+			cur.Comment = r.Description
+			cur.TypeExpr = r.TypeExpr
+			cur.Enums = r.Enums
+			continue
 		}
 
-		te := strings.TrimSpace(r.TypeExpr)
-		switch {
-		case strings.HasPrefix(te, "[]"):
-			base := strings.TrimPrefix(strings.TrimSpace(te[2:]), "*")
-			addImplicit(base)
-		case strings.HasPrefix(te, "map[") && strings.Contains(te, "]"):
-			idx := strings.Index(te, "]")
-			base := strings.TrimPrefix(strings.TrimSpace(te[idx+1:]), "*")
-			addImplicit(base)
-		default:
-			addImplicit(strings.TrimPrefix(te, "*"))
+		if r.K == kParam {
+			cur := ensure(root, r.Path[0])
+			cur.IsParam = true
+			cur.TypeExpr = r.TypeExpr
+			cur.Comment = r.Description
+			cur.Enums = r.Enums
+			cur.OmitEmpty = r.OmitEmpty
+			if r.DefaultVal != "" {
+				cur.DefaultVal = r.DefaultVal
+			}
+
+			// Add implicit types
+			te := strings.TrimSpace(r.TypeExpr)
+			switch {
+			case strings.HasPrefix(te, "[]"):
+				base := strings.TrimPrefix(strings.TrimSpace(te[2:]), "*")
+				addImplicit(base)
+			case strings.HasPrefix(te, "map[") && strings.Contains(te, "]"):
+				idx := strings.Index(te, "]")
+				base := strings.TrimPrefix(strings.TrimSpace(te[idx+1:]), "*")
+				addImplicit(base)
+			default:
+				addImplicit(strings.TrimPrefix(te, "*"))
+			}
+			continue
+		}
+
+		if r.K == kField {
+			// Field belongs to a type
+			if len(r.Path) < 2 {
+				continue
+			}
+			parentName := r.Path[0]
+			fieldName := r.Path[1]
+
+			parent := ensure(root, parentName)
+			field := ensure(parent, fieldName)
+			field.TypeExpr = r.TypeExpr
+			field.Comment = r.Description
+			field.Enums = r.Enums
+			field.OmitEmpty = r.OmitEmpty
+			if r.DefaultVal != "" {
+				field.DefaultVal = r.DefaultVal
+			}
+
+			// Add implicit types
+			te := strings.TrimSpace(r.TypeExpr)
+			switch {
+			case strings.HasPrefix(te, "[]"):
+				base := strings.TrimPrefix(strings.TrimSpace(te[2:]), "*")
+				addImplicit(base)
+			case strings.HasPrefix(te, "map[") && strings.Contains(te, "]"):
+				idx := strings.Index(te, "]")
+				base := strings.TrimPrefix(strings.TrimSpace(te[idx+1:]), "*")
+				addImplicit(base)
+			default:
+				addImplicit(strings.TrimPrefix(te, "*"))
+			}
 		}
 	}
 	return root
@@ -407,6 +551,26 @@ func quoteEnums(vals []string) string {
 /*  Struct emitter                                                             */
 /* -------------------------------------------------------------------------- */
 
+func (g *gen) writeEnum(n *Node) {
+	if len(n.Enums) == 0 {
+		return
+	}
+
+	name := camel(n.Name)
+	if name == "Config" || name == "ConfigSpec" {
+		name = "Values" + name
+	}
+
+	// Get base type
+	baseType := n.TypeExpr
+	if baseType == "" {
+		baseType = "string"
+	}
+
+	g.buf.WriteString(fmt.Sprintf("// +kubebuilder:validation:Enum=%s\n", quoteEnums(n.Enums)))
+	g.buf.WriteString(fmt.Sprintf("type %s %s\n\n", name, baseType))
+}
+
 func (g *gen) writeStruct(n *Node) {
 	if strings.HasPrefix(n.Name, "[]") || strings.HasPrefix(n.Name, "map[") {
 		return
@@ -483,7 +647,8 @@ func (g *gen) emitField(c *Node) {
 	}
 
 	tag := "`json:\"" + c.Name
-	if strings.HasPrefix(typ, "[]") || strings.HasPrefix(typ, "map[") || strings.HasPrefix(typ, "*") {
+	// Add omitempty for: slices, maps, pointers, or fields explicitly marked with []
+	if strings.HasPrefix(typ, "[]") || strings.HasPrefix(typ, "map[") || strings.HasPrefix(typ, "*") || c.OmitEmpty {
 		tag += ",omitempty"
 	}
 	tag += "\"`"
@@ -528,6 +693,13 @@ func (g *gen) Generate(root *Node) ([]byte, []byte, error) {
 	walk(root)
 
 	g.writeStruct(root)
+
+	// Generate enum types
+	for _, c := range root.Child {
+		if len(c.Enums) > 0 {
+			g.writeEnum(c)
+		}
+	}
 
 	var src []byte
 	if len(g.imp) > 0 {
@@ -878,6 +1050,8 @@ func formatDefault(val, typ string) string {
 		return ""
 	}
 	if t == "string" || t == "quantity" {
+		// Remove quotes if already present
+		val = strings.Trim(val, `"`)
 		return fmt.Sprintf("%q", val)
 	}
 	var parsed interface{}
@@ -923,15 +1097,17 @@ func CollectUndefined(root *Node) []string {
 			base := strings.TrimPrefix(name, "*")
 			if base != "" &&
 				base != aliasObject && base != aliasEmptyObject &&
+				base != "struct" && base != "object" &&
 				!isPrimitive(base) &&
 				!strings.HasPrefix(base, "[]") &&
 				!strings.HasPrefix(base, "map[") &&
-				len(n.Child) > 0 {
+				(len(n.Child) > 0 || len(n.Enums) > 0) {
 				defined[base] = struct{}{}
 			}
 		}
 		if b := baseOf(n.TypeExpr); b != "" {
 			if b != aliasObject && b != aliasEmptyObject &&
+				b != "struct" && b != "object" &&
 				b != aliasResources && b != aliasRequest && b != aliasLimit &&
 				!isPrimitive(b) &&
 				!strings.HasPrefix(b, "[]") &&
