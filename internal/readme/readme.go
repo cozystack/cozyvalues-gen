@@ -59,7 +59,8 @@ func isStringFormat(s string) bool {
 type Config struct{}
 
 type Meta struct {
-	Sections []*Section
+	Sections   []*Section
+	KnownTypes map[string]bool
 }
 
 type Section struct {
@@ -90,8 +91,7 @@ type ParamToRender struct {
 
 var valuesMap map[string]interface{}
 var typeFields map[string][]FieldMeta
-
-func defaultConfig() *Config { return &Config{} }
+var knownTypesCache map[string]bool
 
 func createValuesObject(path string) (map[string]interface{}, error) {
 	data, err := ioutil.ReadFile(path)
@@ -122,26 +122,74 @@ func parseMetadataComments(path string) (*Meta, error) {
 	var current *Section
 	var allParams []ParamMeta
 
-	sectionRe := regexp.MustCompile(`^#{1,}\s+@section\s+(.*)$`)
-	// description part is optional
-	paramRe := regexp.MustCompile(`^#{1,}\s+@param\s+(\w+)\s+\{([^}]+)\}(?:\s+(.*))?$`)
-	fieldRe := regexp.MustCompile(`^#{1,}\s+@field\s+([\w\.]+)\s+\{(.+)\}\s*(.*)$`)
+	// Default value pattern: accepts quoted strings, JSON objects/arrays, booleans, numbers (with decimals), null, or simple tokens
+	defaultValuePattern := `(?:"[^"]*"|'[^']*'|\{[^}]*\}|\[[^\]]*\]|true|false|null|-?\d+(?:\.\d+)?|\S+)`
 
-	// ───────────── first pass: @section & @param ─────────────
+	sectionRe := regexp.MustCompile(`^#{1,}\s+@section\s+(.*)$`)
+	// JSDoc-like syntax: @param {type} name - description
+	paramRe := regexp.MustCompile(`^#{1,}\s+@param\s+\{([^}]+)\}\s+(\[?\w+\]?)(?:=(` + defaultValuePattern + `))?(?:\s+-\s+(.*))?$`)
+	// JSDoc-like syntax: @field {type} name - description or @field {type} name=default - description
+	fieldRe := regexp.MustCompile(`^#{1,}\s+@(?:field|property)\s+\{([^}]+)\}\s+(\[?\w+\]?)(?:=(` + defaultValuePattern + `))?(?:\s+-\s+(.*))?$`)
+	// @typedef {struct} TypeName - description
+	typedefRe := regexp.MustCompile(`^#{1,}\s+@typedef\s+\{(?:struct|object)\}\s+(\w+)(?:\s+-\s+(.*))?$`)
+	// @enum {type} EnumName - description
+	enumRe := regexp.MustCompile(`^#{1,}\s+@enum\s+\{([^}]+)\}\s+(\w+)(?:\s+-\s+(.*))?$`)
+
+	// ───────────── Parse all annotations in a single pass ─────────────
 	lines := strings.Split(string(data), "\n")
+	var currentTypeDef string
+	knownTypesCache = make(map[string]bool) // Track all defined types including enums
+	knownTypes := knownTypesCache
+
+	seen := map[fieldKey]struct{}{}
+	addField := func(parent, name, typ, desc string) {
+		if parent == "" || name == "" {
+			return
+		}
+		k := fieldKey{parent: parent, name: name}
+		if _, dup := seen[k]; dup {
+			return
+		}
+		typeFields[parent] = append(typeFields[parent], FieldMeta{
+			ParentTypeName: parent,
+			Name:           name,
+			Type:           typ,
+			Description:    desc,
+		})
+		seen[k] = struct{}{}
+	}
+
 	for _, raw := range lines {
 		line := strings.TrimSpace(raw)
+
 		if m := sectionRe.FindStringSubmatch(line); m != nil {
 			sec := &Section{Name: m[1]}
 			sections = append(sections, sec)
 			current = sec
+			currentTypeDef = ""
 			continue
 		}
+
+		if m := typedefRe.FindStringSubmatch(line); m != nil {
+			currentTypeDef = m[1]
+			knownTypes[currentTypeDef] = true
+			continue
+		}
+
+		if m := enumRe.FindStringSubmatch(line); m != nil {
+			enumName := m[2]
+			knownTypes[enumName] = true
+			currentTypeDef = ""
+			continue
+		}
+
 		if m := paramRe.FindStringSubmatch(line); m != nil {
-			name, typ := m[1], m[2]
+			typ := m[1]
+			name := strings.Trim(m[2], "[]")
+			// defaultVal in m[3] if present (for @param syntax)
 			desc := ""
-			if len(m) > 3 {
-				desc = m[3]
+			if len(m) > 4 {
+				desc = m[4]
 			}
 			pm := ParamMeta{
 				Name:         name,
@@ -158,96 +206,50 @@ func parseMetadataComments(path string) (*Meta, error) {
 				}
 				sections[0].Parameters = append(sections[0].Parameters, pm)
 			}
+			currentTypeDef = ""
+			continue
+		}
+
+		if m := fieldRe.FindStringSubmatch(line); m != nil {
+			typ := m[1]
+			fieldName := strings.Trim(m[2], "[]")
+			defaultVal := ""
+			if len(m) > 3 && m[3] != "" {
+				defaultVal = m[3]
+			}
+			desc := ""
+			if len(m) > 4 {
+				desc = m[4]
+			}
+
+			// If default value is specified, append it to type for extractAnnotationDefault to process
+			if defaultVal != "" {
+				typ = typ + " default=" + defaultVal
+			}
+
+			// If we have current typedef, use it as parent
+			if currentTypeDef != "" {
+				addField(currentTypeDef, fieldName, typ, desc)
+			}
 		}
 	}
 
 	// build param-name → type alias map
 	aliasMap := buildAliasMap(allParams)
 
-	seen := map[fieldKey]struct{}{}
-	addField := func(parent, name, typ, desc string) {
-		if parent == "" || name == "" {
-			return
-		}
-		if real, ok := aliasMap[parent]; ok {
-			parent = real
-		}
-		k := fieldKey{parent: parent, name: name}
-		if _, dup := seen[k]; dup {
-			return
-		}
-		typeFields[parent] = append(typeFields[parent], FieldMeta{
-			ParentTypeName: parent,
-			Name:           name,
-			Type:           typ,
-			Description:    desc,
-		})
-		seen[k] = struct{}{}
-	}
-
-	// collect from raw lines
-	for _, line := range lines {
-		if m := fieldRe.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
-			qual := m[1]
-			typ := m[2]
-			desc := m[3]
-
-			rootType, field := qual, ""
-			if strings.Contains(qual, ".") {
-				parts := strings.SplitN(qual, ".", 2)
-				rootType, field = parts[0], parts[1]
-			}
-			addField(rootType, field, typ, desc)
-		}
-	}
-
-	// ───────────── second pass: traverse YAML & @field ─────────────
-	var walk func(node *yaml.Node, path []string)
-	walk = func(node *yaml.Node, path []string) {
-		if node.Kind != yaml.MappingNode {
-			return
-		}
-		for i := 0; i < len(node.Content); i += 2 {
-			key := node.Content[i]
-			val := node.Content[i+1]
-			name := key.Value
-
-			comments := key.HeadComment + "\n" + key.LineComment + "\n" + key.FootComment
-			for _, line := range strings.Split(comments, "\n") {
-				if m := fieldRe.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
-					qual := m[1]
-					typ := m[2]
-					desc := m[3]
-
-					rootType, field := qual, ""
-					if strings.Contains(qual, ".") {
-						parts := strings.SplitN(qual, ".", 2)
-						rootType, field = parts[0], parts[1]
-					}
-					// resolve via alias map (foo → FooType)
-					if real, ok := aliasMap[rootType]; ok {
-						rootType = real
-					}
-
-					typeFields[rootType] = append(typeFields[rootType], FieldMeta{
-						ParentTypeName: rootType,
-						Name:           field,
-						Type:           typ,
-						Description:    desc,
-					})
-				}
-			}
-			if val.Kind == yaml.MappingNode {
-				walk(val, append(path, name))
+	// Resolve aliased types in typeFields
+	for parent := range typeFields {
+		if real, ok := aliasMap[parent]; ok && real != parent {
+			// Move fields from alias to real type
+			if _, exists := typeFields[real]; !exists {
+				typeFields[real] = typeFields[parent]
+			} else {
+				typeFields[real] = append(typeFields[real], typeFields[parent]...)
 			}
 		}
 	}
 
-	if len(root.Content) > 0 {
-		walk(root.Content[0], nil)
-	}
-
-	return &Meta{Sections: sections}, nil
+	return &Meta{Sections: sections, KnownTypes: knownTypes}, nil
 }
 
 func resolveTypeName(typ string) string {
@@ -831,7 +833,7 @@ func renderSection(sec *Section) string {
 	return fmt.Sprintf("\n### %s\n\n%s", sec.Name, markdownTable(rows))
 }
 
-func validateValues(params []ParamMeta, typeFields map[string][]FieldMeta, values map[string]interface{}) error {
+func validateValues(params []ParamMeta, typeFields map[string][]FieldMeta, values map[string]interface{}, knownTypes map[string]bool) error {
 	paramMap := make(map[string]ParamMeta, len(params))
 	for _, p := range params {
 		paramMap[p.Name] = p
@@ -880,6 +882,10 @@ func validateValues(params []ParamMeta, typeFields map[string][]FieldMeta, value
 
 		fields, has := typeFields[base]
 		if !has {
+			// Check if it's a known type (enum or typedef without fields)
+			if knownTypes[base] {
+				return nil
+			}
 			return fmt.Errorf("type '%s' referenced at '%s' has no schema", base, path)
 		}
 
@@ -946,7 +952,8 @@ func UpdateParametersSection(valuesPath, readmePath string) error {
 	for _, s := range meta.Sections {
 		params = append(params, s.Parameters...)
 	}
-	if err := validateValues(params, typeFields, vals); err != nil {
+
+	if err := validateValues(params, typeFields, vals, meta.KnownTypes); err != nil {
 		return fmt.Errorf("validate values: %w", err)
 	}
 

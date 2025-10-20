@@ -1,0 +1,64 @@
+##
+## Complex default values demonstration
+##
+
+## @section String defaults
+
+## @param {string} message="hello world" - Message with spaces
+message: "hello world"
+
+## @param {string} path='single-quoted' - Single quoted string
+path: 'single-quoted'
+
+## @param {string} appName="my-app-name" - String with hyphens
+appName: "my-app-name"
+
+## @section Numeric defaults
+
+## @param {int} replicas=3 - Positive integer
+replicas: 3
+
+## @param {int} offset=-10 - Negative integer
+offset: -10
+
+## @param {float64} rate=3.14 - Decimal number
+rate: 3.14
+
+## @param {float64} delta=-2.5 - Negative decimal
+delta: -2.5
+
+## @section Boolean and null
+
+## @param {bool} enabled=true - Boolean true
+enabled: true
+
+## @param {bool} disabled=false - Boolean false
+disabled: false
+
+## @param {*string} optional=null - Null value
+optional:
+
+## @section JSON structures
+
+## @param {object} config={"timeout":30,"retries":3} - JSON object
+config:
+  timeout: 30
+  retries: 3
+
+## @param {[]int} ports=[80,443,8080] - JSON array
+ports:
+  - 80
+  - 443
+  - 8080
+
+## @typedef {struct} ComplexConfig - Complex configuration
+## @field {[]string} tags=["production","api"] - String array
+## @field {object} metadata={"env":"prod","region":"us-east"} - Object with strings
+
+## @param {ComplexConfig} complex - Complex config
+complex:
+  tags: ["production", "api"]
+  metadata:
+    env: "prod"
+    region: "us-east"
+

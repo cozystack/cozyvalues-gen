@@ -1,36 +1,41 @@
 ## @section Common parameters
 
-## @param external {bool} Enable external access from outside the cluster
-## @param size {string} Persistent Volume size
-## @param replicas {int} Number of Postgres replicas
-## @param storageClass {string} StorageClass used to store the data
-##
+## @param {bool} external - Enable external access from outside the cluster
+## @param {string} size - Persistent Volume size
+## @param {int} replicas - Number of Postgres replicas
+## @param {string} storageClass - StorageClass used to store the data
 external: false
 size: 10Gi
 replicas: 2
 storageClass: ""
 
-## @param postgresql {postgresql} PostgreSQL server configuration
-## @field postgresql.parameters {postgresqlParameters} PostgreSQL server parameters
-## @field postgresqlParameters.max_connections {int} Determines the maximum number of concurrent connections to the database server. The default is typically 100 connections
-##
+## @typedef {struct} PostgresqlParameters - PostgreSQL server parameters
+## @field {int} max_connections - Determines the maximum number of concurrent connections to the database server. The default is typically 100 connections
+
+## @typedef {struct} Postgresql - PostgreSQL server configuration
+## @field {PostgresqlParameters} parameters - PostgreSQL server parameters
+
+## @param {Postgresql} postgresql - PostgreSQL server configuration
 postgresql:
   parameters:
     max_connections: 100
 
-## Configuration for the quorum-based synchronous replication
-## @param quorum {quorum} Quorum configuration for synchronous replication
-## @field quorum.minSyncReplicas {int} Minimum number of synchronous replicas that must acknowledge a transaction before it is considered committed.
-## @field quorum.maxSyncReplicas {int} Maximum number of synchronous replicas that can acknowledge a transaction (must be lower than the number of instances).
+## @typedef {struct} Quorum - Quorum configuration for synchronous replication
+## @field {int} minSyncReplicas - Minimum number of synchronous replicas that must acknowledge a transaction before it is considered committed.
+## @field {int} maxSyncReplicas - Maximum number of synchronous replicas that can acknowledge a transaction (must be lower than the number of instances).
+
+## @param {Quorum} quorum - Quorum configuration for synchronous replication
 quorum:
   minSyncReplicas: 0
   maxSyncReplicas: 0
 
 ## @section Configuration parameters
 
-## @param users {map[string]user} Users configuration
-## @field user.password {*string} Password for the user
-## @field user.replication {*bool} Whether the user has replication privileges
+## @typedef {struct} User - User configuration
+## @field {*string} password - Password for the user
+## @field {*bool} replication - Whether the user has replication privileges
+
+## @param {map[string]User} users - Users configuration
 ##
 ## Example:
 ## users:
@@ -42,14 +47,17 @@ quorum:
 ##     password: qwerty123
 ##   debezium:
 ##     replication: true
-##
 users: {}
 
-## @param databases {map[string]database} Databases configuration
-## @field database.roles {*databaseRoles} Roles for the database
-## @field databaseRoles.admin {[]string} List of users with admin privileges
-## @field databaseRoles.readonly {[]string} List of users with read-only privileges
-## @field database.extensions {[]string} Extensions enabled for the database
+## @typedef {struct} DatabaseRoles - Database roles configuration
+## @field {[]string} admin - List of users with admin privileges
+## @field {[]string} readonly - List of users with read-only privileges
+
+## @typedef {struct} Database - Database configuration
+## @field {*DatabaseRoles} roles - Roles for the database
+## @field {[]string} extensions - Extensions enabled for the database
+
+## @param {map[string]Database} databases - Databases configuration
 ##
 ## Example:
 ## databases:
@@ -70,14 +78,16 @@ databases: {}
 
 ## @section Backup parameters
 
-## @param backup {backup} Backup configuration
-## @field backup.enabled {bool} Enable regular backups
-## @field backup.schedule {string} Cron schedule for automated backups
-## @field backup.retentionPolicy {string} Retention policy
-## @field backup.destinationPath {string} Path to store the backup (i.e. s3://bucket/path/to/folder)
-## @field backup.endpointURL {string} S3 Endpoint used to upload data to the cloud
-## @field backup.s3AccessKey {string} Access key for S3, used for authentication
-## @field backup.s3SecretKey {string} Secret key for S3, used for authentication
+## @typedef {struct} Backup - Backup configuration
+## @field {bool} enabled - Enable regular backups
+## @field {string} schedule - Cron schedule for automated backups
+## @field {string} retentionPolicy - Retention policy
+## @field {string} destinationPath - Path to store the backup (i.e. s3://bucket/path/to/folder)
+## @field {string} endpointURL - S3 Endpoint used to upload data to the cloud
+## @field {string} s3AccessKey - Access key for S3, used for authentication
+## @field {string} s3SecretKey - Secret key for S3, used for authentication
+
+## @param {Backup} backup - Backup configuration
 backup:
   enabled: false
   retentionPolicy: 30d
@@ -89,24 +99,36 @@ backup:
 
 ## @section Bootstrap parameters
 
-## @param bootstrap {bootstrap} Bootstrap configuration
-## @field bootstrap.enabled {bool} Restore database cluster from a backup
-## @field bootstrap.recoveryTime {string} Timestamp (PITR) up to which recovery will proceed, expressed in RFC 3339 format. If left empty, will restore latest
-## @field bootstrap.oldName {string} Name of database cluster before deleting
-##
+## @typedef {struct} Bootstrap - Bootstrap configuration
+## @field {bool} enabled - Restore database cluster from a backup
+## @field {string} recoveryTime - Timestamp (PITR) up to which recovery will proceed, expressed in RFC 3339 format. If left empty, will restore latest
+## @field {string} oldName - Name of database cluster before deleting
+
+## @param {Bootstrap} bootstrap - Bootstrap configuration
 bootstrap:
   enabled: false
   # example: 2020-11-26 15:22:00.00000+00
   recoveryTime: ""
   oldName: ""
 
-## @param resources {resources} Resources
-## @field resources.cpu {*quantity} CPU
-## @field resources.memory {*quantity} Memory
+## @typedef {struct} Resources - Resource configuration
+## @field {*quantity} cpu - CPU
+## @field {*quantity} memory - Memory
+
+## @param {Resources} resources - Resources
 resources: {}
  # resources:
  #   cpu: 4000m
  #   memory: 4Gi
- 
-## @param resourcesPreset {string enum:"nano,micro,small,medium,large,xlarge,2xlarge"} Default sizing preset used when `resources` is omitted.
+
+## @enum {string} ResourcesPreset - Default sizing preset
+## @value nano
+## @value micro
+## @value small
+## @value medium
+## @value large
+## @value xlarge
+## @value 2xlarge
+
+## @param {ResourcesPreset} resourcesPreset="micro" - Default sizing preset used when `resources` is omitted.
 resourcesPreset: "micro"
