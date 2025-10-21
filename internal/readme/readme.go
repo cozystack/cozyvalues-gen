@@ -92,6 +92,7 @@ type ParamToRender struct {
 var valuesMap map[string]interface{}
 var typeFields map[string][]FieldMeta
 var knownTypesCache map[string]bool
+var enumBaseTypes map[string]string
 
 func createValuesObject(path string) (map[string]interface{}, error) {
 	data, err := ioutil.ReadFile(path)
@@ -139,6 +140,7 @@ func parseMetadataComments(path string) (*Meta, error) {
 	lines := strings.Split(string(data), "\n")
 	var currentTypeDef string
 	knownTypesCache = make(map[string]bool) // Track all defined types including enums
+	enumBaseTypes = make(map[string]string) // Track enum name -> base type (e.g., ResourcesPreset -> string)
 	knownTypes := knownTypesCache
 
 	seen := map[fieldKey]struct{}{}
@@ -177,8 +179,10 @@ func parseMetadataComments(path string) (*Meta, error) {
 		}
 
 		if m := enumRe.FindStringSubmatch(line); m != nil {
+			baseType := m[1] // e.g., "string"
 			enumName := m[2]
 			knownTypes[enumName] = true
+			enumBaseTypes[enumName] = baseType
 			currentTypeDef = ""
 			continue
 		}
@@ -326,8 +330,12 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 		isArray := strings.HasPrefix(baseForKind, "[]")
 		isMap := strings.HasPrefix(baseForKind, "map[")
 		isPtr := strings.HasPrefix(orig, "*")
+		isEnum := false
+		if _, ok := enumBaseTypes[baseType]; ok {
+			isEnum = true
+		}
 
-		isArrayPrim := isArray && isPrimitive(baseType)
+		isArrayPrim := isArray && (isPrimitive(baseType) || isEnum)
 		isPtrPrim := isPtr && isPrimitive(baseType)
 
 		val := defaultValueForType(orig)
@@ -402,6 +410,19 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 				val = renderAnnotationDefault(def)
 			} else {
 				val = "`null`"
+			}
+
+		case isEnum:
+			// Treat enums like primitives - extract actual value
+			raw, exists := valuesMap[pm.Name]
+			if !exists {
+				if def, ok := extractAnnotationDefault(orig); ok {
+					val = renderAnnotationDefault(def)
+				} else {
+					val = defaultValueForType(orig)
+				}
+			} else {
+				val = valueString(raw, exists, orig)
 			}
 
 		case !isPrimitive(baseType) && len(typeFields[baseType]) > 0:
@@ -496,7 +517,11 @@ func traverseByType(path string, raw interface{}, typeName string) []ParamToRend
 
 		isArray := strings.HasPrefix(ft, "[]")
 		isMap := strings.HasPrefix(ft, "map[")
-		isArrayOfPrimitives := isArray && isPrimitive(baseType)
+		isEnum := false
+		if _, ok := enumBaseTypes[baseType]; ok {
+			isEnum = true
+		}
+		isArrayOfPrimitives := isArray && (isPrimitive(baseType) || isEnum)
 		isDirectPrimitive := isPrimitive(baseType) || strings.Contains(baseType, "quantity")
 
 		value := defaultValueForType(fm.Type)
@@ -530,6 +555,18 @@ func traverseByType(path string, raw interface{}, typeName string) []ParamToRend
 				value = "`null`"
 			} else {
 				value = "`{}`"
+			}
+
+		case isEnum:
+			// Treat enums like primitives - extract actual value
+			if okVal {
+				value = valueString(val, okVal, fm.Type)
+			} else if def, ok := extractAnnotationDefault(fm.Type); ok {
+				value = renderAnnotationDefault(def)
+			} else if hasPtr {
+				value = "`null`"
+			} else {
+				value = defaultValueForType(fm.Type)
 			}
 
 		case isDirectPrimitive:
@@ -681,6 +718,10 @@ func normalizeType(t string) string {
 		if strings.HasPrefix(base, "[]") || strings.HasPrefix(base, "map[") {
 			return normalizeType(base)
 		}
+		// Check if pointer to enum type
+		if baseType, isEnum := enumBaseTypes[base]; isEnum {
+			return "*" + baseType
+		}
 		// pointer to non-primitive, non-collection → *object
 		if !isPrimitive(base) && !strings.HasPrefix(base, "[]") && !strings.HasPrefix(base, "map[") {
 			return "*object"
@@ -702,6 +743,10 @@ func normalizeType(t string) string {
 	// Handle array types
 	if strings.HasPrefix(t, "[]") {
 		base := deriveTypeName(t)
+		// Check if array of enum type
+		if baseType, isEnum := enumBaseTypes[base]; isEnum {
+			return "[]" + baseType
+		}
 		if !isPrimitive(base) {
 			return "[]object"
 		}
@@ -721,8 +766,12 @@ func normalizeType(t string) string {
 		return "map[string]object"
 	}
 
-	// non-primitive scalar becomes object
+	// non-primitive scalar: check if it's an enum first
 	if !isPrimitive(t) && !strings.HasPrefix(t, "[]") && !strings.HasPrefix(t, "map[") {
+		// Check if it's a known enum type
+		if baseType, isEnum := enumBaseTypes[t]; isEnum {
+			return baseType
+		}
 		return "object"
 	}
 	return t

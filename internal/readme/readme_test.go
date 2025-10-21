@@ -817,3 +817,130 @@ backup: {}
 	require.Contains(t, table, "`backup.settings`")
 	require.Contains(t, table, "`{}`", "expected explicit default={} to render as {}")
 }
+
+func TestEnumTypesDisplayAsBaseType(t *testing.T) {
+	yamlContent := `
+## @enum {string} ResourcesPreset - Default sizing preset
+## @value nano
+## @value micro
+## @value small
+## @value medium
+## @value large
+## @value xlarge
+## @value 2xlarge
+
+## @param {ResourcesPreset} resourcesPreset - Default sizing preset used when resources is omitted
+resourcesPreset: "small"
+`
+	table := renderTableFromValues(t, yamlContent)
+
+	require.Contains(t, table, "`resourcesPreset`", "param should be present")
+	require.Contains(t, table, "`string`", "enum type should display as base type 'string' not 'object'")
+	require.Contains(t, table, "`small`", "enum default value should be extracted from values.yaml")
+	require.NotContains(t, table, "`object`", "enum should not be displayed as object")
+	require.NotContains(t, table, "`{}`", "enum should not have {} as default")
+}
+
+func TestEnumFieldInStructDisplaysCorrectly(t *testing.T) {
+	yamlContent := `
+## @enum {string} ResourcesPreset - Default sizing preset
+## @value nano
+## @value micro
+## @value small
+
+## @typedef {struct} ClickHouseKeeper - ClickHouse Keeper configuration
+## @field {bool} [enabled] - Deploy ClickHouse Keeper for cluster coordination
+## @field {quantity} [size] - Persistent Volume Claim size
+## @field {ResourcesPreset} [resourcesPreset] - Default sizing preset
+## @field {int} [replicas] - Number of Keeper replicas
+
+## @param {ClickHouseKeeper} clickhouseKeeper - ClickHouse Keeper configuration
+clickhouseKeeper:
+  enabled: true
+  size: 1Gi
+  resourcesPreset: micro
+  replicas: 3
+`
+	table := renderTableFromValues(t, yamlContent)
+
+	require.Contains(t, table, "`clickhouseKeeper.resourcesPreset`", "enum field should be present")
+	require.Contains(t, table, "`string`", "enum field type should display as 'string' not 'object'")
+	require.Contains(t, table, "`micro`", "enum field default value should be 'micro' not '{}'")
+	require.NotContains(t, table, "`clickhouseKeeper.resourcesPreset`.*`object`", "enum field should not be object")
+}
+
+func TestMultipleEnumFieldsWithDifferentDefaults(t *testing.T) {
+	yamlContent := `
+## @enum {string} ResourcesPreset - Sizing preset
+## @value nano
+## @value micro
+## @value small
+## @value medium
+
+## @typedef {struct} Resources - Explicit CPU and memory configuration
+## @field {quantity} [cpu] - CPU available
+## @field {quantity} [memory] - Memory (RAM) available
+
+## @param {int} replicas - Number of replicas
+replicas: 2
+
+## @param {Resources} [resources] - Explicit CPU and memory configuration
+resources: {}
+
+## @param {ResourcesPreset} resourcesPreset - Default sizing preset
+resourcesPreset: "small"
+
+## @typedef {struct} Keeper - Keeper configuration
+## @field {ResourcesPreset} [resourcesPreset] - Default sizing preset
+
+## @param {Keeper} keeper - Keeper configuration
+keeper:
+  resourcesPreset: nano
+`
+	table := renderTableFromValues(t, yamlContent)
+
+	require.Contains(t, table, "`resourcesPreset`", "root enum param should be present")
+	require.Regexp(t, "`resourcesPreset`.*\\|.*`string`.*\\|.*`small`", table, "root enum should show type string and value small")
+
+	require.Contains(t, table, "`keeper.resourcesPreset`", "nested enum field should be present")
+	require.Regexp(t, "`keeper\\.resourcesPreset`.*\\|.*`string`.*\\|.*`nano`", table, "nested enum should show type string and value nano")
+
+	require.NotContains(t, table, "`object`.*`{}`", "enums should not display as object with {}")
+}
+
+func TestPointerToEnumDisplaysCorrectly(t *testing.T) {
+	yamlContent := `
+## @enum {string} Topology - Seaweedfs topology
+## @value single
+## @value multi
+
+## @param {*Topology} topology - Optional topology configuration
+topology:
+`
+	table := renderTableFromValues(t, yamlContent)
+
+	require.Contains(t, table, "`topology`", "pointer-to-enum param should be present")
+	require.Contains(t, table, "`*string`", "pointer-to-enum should display as *string not *object")
+	require.Contains(t, table, "`null`", "pointer-to-enum without value should be null")
+	require.NotContains(t, table, "`*object`", "pointer-to-enum should not be *object")
+}
+
+func TestArrayOfEnumsDisplaysCorrectly(t *testing.T) {
+	yamlContent := `
+## @enum {string} PresetSize - Size preset
+## @value small
+## @value medium
+## @value large
+
+## @param {[]PresetSize} presets - List of presets
+presets:
+  - small
+  - large
+`
+	table := renderTableFromValues(t, yamlContent)
+
+	require.Contains(t, table, "`presets`", "array-of-enums param should be present")
+	require.Contains(t, table, "`[]string`", "array-of-enums should display as []string not []object")
+	require.Contains(t, table, "`[small, large]`", "array-of-enums should show actual values")
+	require.NotContains(t, table, "`[]object`", "array-of-enums should not be []object")
+}
