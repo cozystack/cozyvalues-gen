@@ -69,8 +69,8 @@ var (
 	reTypedef = regexp.MustCompile(`^#{1,}\s+@typedef\s+\{(struct|object)\}\s+(\w+)(?:\s+-\s+(.*))?$`)
 	// ## @enum {type} EnumName
 	reEnum = regexp.MustCompile(`^#{1,}\s+@enum\s+\{([^}]+)\}\s+(\w+)(?:\s+-\s+(.*))?$`)
-	// ## @value valueName
-	reEnumValue = regexp.MustCompile(`^#{1,}\s+@value\s+(\w+)(?:\s+-\s+(.*))?$`)
+	// ## @value valueName (supports hyphens and underscores: tcp-with-proxy)
+	reEnumValue = regexp.MustCompile(`^#{1,}\s+@value\s+([-\w]+)(?:\s+-\s+(.*))?$`)
 )
 
 // additional string-format aliases
@@ -541,10 +541,11 @@ func (g *gen) goType(n *Node) string {
 }
 
 func quoteEnums(vals []string) string {
+	quoted := make([]string, len(vals))
 	for i, v := range vals {
-		vals[i] = fmt.Sprintf("%q", v)
+		quoted[i] = fmt.Sprintf("%q", v)
 	}
-	return strings.Join(vals, ";")
+	return strings.Join(quoted, ";")
 }
 
 /* -------------------------------------------------------------------------- */

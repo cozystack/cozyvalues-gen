@@ -113,3 +113,39 @@ requiredParam: ""
 	require.Contains(t, code, `OptionalParam string `+"`json:\"optionalParam,omitempty\"`", "bracketed param should have omitempty")
 	require.Contains(t, code, "RequiredParam string `json:\"requiredParam\"`", "non-bracketed param should not have omitempty")
 }
+
+func TestEnumWithHyphens(t *testing.T) {
+	const yamlContent = `
+## @enum {string} Mode - Mode for balancer.
+## @value tcp
+## @value tcp-with-proxy
+
+## @typedef {struct} HttpAndHttps - HTTP and HTTPS configuration.
+## @field {Mode} mode - Mode for balancer.
+
+## @param {HttpAndHttps} httpAndHttps - HTTP and HTTPS configuration.
+httpAndHttps:
+  mode: tcp
+`
+	tmpfile := writeTempFile(yamlContent)
+	defer os.Remove(tmpfile)
+
+	rows, err := Parse(tmpfile)
+	require.NoError(t, err)
+	root := Build(rows)
+
+	g := &gen{pkg: "values"}
+	formatted, _, err := g.Generate(root)
+	require.NoError(t, err)
+	code := string(formatted)
+
+	// Check that enum with hyphens is parsed correctly
+	require.Contains(t, code, "type Mode string", "enum should generate type alias")
+	require.Contains(t, code, `+kubebuilder:validation:Enum="tcp";"tcp-with-proxy"`, "enum should have both values including tcp-with-proxy")
+
+	// Check that the enum values are correctly stored
+	modeNode := root.Child["Mode"]
+	require.NotNil(t, modeNode, "Mode enum node should exist")
+	require.Contains(t, modeNode.Enums, "tcp", "Mode enum should contain 'tcp'")
+	require.Contains(t, modeNode.Enums, "tcp-with-proxy", "Mode enum should contain 'tcp-with-proxy'")
+}

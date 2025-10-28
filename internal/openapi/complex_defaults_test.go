@@ -164,3 +164,4 @@ server: {}
 	require.Contains(t, code, `+kubebuilder:default:=-1`, "negative number should be in code")
 	require.Contains(t, code, `+kubebuilder:default:={"prod","api"}`, "array default should be in code")
 }
+
