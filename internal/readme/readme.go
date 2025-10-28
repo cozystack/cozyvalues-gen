@@ -367,7 +367,12 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 			}
 
 		case isMap:
-			if !isPrimitive(baseType) && len(typeFields[baseType]) > 0 {
+			// Check if map is empty in values.yaml
+			if raw, ok := valuesMap[pm.Name].(map[string]interface{}); ok && len(raw) == 0 {
+				// Empty map always renders as {}
+				val = "`{}`"
+			} else if !isPrimitive(baseType) && len(typeFields[baseType]) > 0 {
+				// Non-empty map with structured type renders as {...}
 				val = "`{...}`"
 			} else if def, ok := extractAnnotationDefault(orig); ok {
 				val = renderAnnotationDefault(def)
