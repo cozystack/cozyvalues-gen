@@ -107,6 +107,19 @@ func TestCollectUndefined(t *testing.T) {
 	require.Contains(t, undef, "customType")
 }
 
+func TestCollectUndefinedWithEmptyStruct(t *testing.T) {
+	rows := []Raw{
+		{K: kTypedef, Path: []string{"UploadLocal"}, TypeExpr: "struct", Description: ""},
+		{K: kTypedef, Path: []string{"Source"}, TypeExpr: "struct", Description: ""},
+		{K: kField, Path: []string{"Source", "upload"}, TypeExpr: "UploadLocal", Description: ""},
+		{K: kParam, Path: []string{"source"}, TypeExpr: "Source", Description: ""},
+	}
+	root := Build(rows)
+	undef := CollectUndefined(root)
+	require.NotContains(t, undef, "UploadLocal", "empty struct UploadLocal should be considered defined")
+	require.NotContains(t, undef, "Source", "struct Source should be considered defined")
+}
+
 func TestFormatDefault(t *testing.T) {
 	require.Equal(t, `"str"`, formatDefault("str", "string"))
 	require.Equal(t, "{1,2}", formatDefault("[1,2]", "[]int"))

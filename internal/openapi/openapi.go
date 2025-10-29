@@ -1101,9 +1101,12 @@ func CollectUndefined(root *Node) []string {
 				base != "struct" && base != "object" &&
 				!isPrimitive(base) &&
 				!strings.HasPrefix(base, "[]") &&
-				!strings.HasPrefix(base, "map[") &&
-				(len(n.Child) > 0 || len(n.Enums) > 0) {
-				defined[base] = struct{}{}
+				!strings.HasPrefix(base, "map[") {
+				// Type is defined if it has children, enums, or if it's a typedef (has TypeExpr "struct")
+				// This allows empty structs (typedefs without fields) to be considered defined
+				if len(n.Child) > 0 || len(n.Enums) > 0 || n.TypeExpr == "struct" {
+					defined[base] = struct{}{}
+				}
 			}
 		}
 		if b := baseOf(n.TypeExpr); b != "" {

@@ -625,7 +625,14 @@ func traverseByType(path string, raw interface{}, typeName string) []ParamToRend
 						childRaw = mm2
 					}
 				}
-				rows = append(rows, traverseByType(path+"."+fm.Name, childRaw, child)...)
+				childRows := traverseByType(path+"."+fm.Name, childRaw, child)
+				// If child type has no fields (empty struct), still ensure the row is created
+				if len(childRows) == 0 && has {
+					// Empty struct - the row for the field itself is already added above,
+					// no need to add anything else
+				} else {
+					rows = append(rows, childRows...)
+				}
 			}
 		}
 	}
