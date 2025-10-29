@@ -277,15 +277,16 @@ func Parse(file string) ([]Raw, error) {
 /* -------------------------------------------------------------------------- */
 
 type Node struct {
-	Name       string
-	IsParam    bool
-	TypeExpr   string
-	Enums      []string
-	DefaultVal string
-	Comment    string
-	OmitEmpty  bool
-	Parent     *Node
-	Child      map[string]*Node
+	Name          string
+	IsParam       bool
+	TypeExpr      string
+	Enums         []string
+	DefaultVal    string
+	HasDefaultVal bool // Set to true when DefaultVal is populated from YAML (even if empty)
+	Comment       string
+	OmitEmpty     bool
+	Parent        *Node
+	Child         map[string]*Node
 }
 
 func newNode(name string, p *Node) *Node {
@@ -338,6 +339,7 @@ func Build(rows []Raw) *Node {
 			cur.OmitEmpty = r.OmitEmpty
 			if r.DefaultVal != "" {
 				cur.DefaultVal = r.DefaultVal
+				cur.HasDefaultVal = true
 			}
 
 			// Add implicit types
@@ -372,6 +374,7 @@ func Build(rows []Raw) *Node {
 			field.OmitEmpty = r.OmitEmpty
 			if r.DefaultVal != "" {
 				field.DefaultVal = r.DefaultVal
+				field.HasDefaultVal = true
 			}
 
 			// Add implicit types
@@ -641,9 +644,16 @@ func (g *gen) emitField(c *Node) {
 		g.buf.WriteString("    // +kubebuilder:validation:Enum=" + quoteEnums(c.Enums) + "\n")
 	}
 
-	if c.DefaultVal != "" {
+	// Emit default value if it was explicitly set (even if empty string)
+	if c.HasDefaultVal && c.DefaultVal != "" {
 		if def := formatDefault(c.DefaultVal, typ); def != "" {
 			g.buf.WriteString("    // +kubebuilder:default:=" + def + "\n")
+		}
+	} else if c.HasDefaultVal && c.DefaultVal == "" {
+		// Empty string default value - still emit it
+		baseType := strings.TrimPrefix(typ, "*")
+		if baseType == "string" || baseType == "quantity" {
+			g.buf.WriteString("    // +kubebuilder:default:=\"\"\n")
 		}
 	}
 
@@ -963,8 +973,9 @@ func PopulateDefaults(n *Node, y interface{}, aliases map[string]*Node) {
 
 			switch vv := yval.(type) {
 			case string, int, int64, float64, bool:
-				if child.DefaultVal == "" {
+				if !child.HasDefaultVal {
 					child.DefaultVal = fmt.Sprintf("%v", vv)
+					child.HasDefaultVal = true
 				}
 
 			case map[string]interface{}:
@@ -980,8 +991,9 @@ func PopulateDefaults(n *Node, y interface{}, aliases map[string]*Node) {
 				}
 
 				if isObj {
-					if child.DefaultVal == "" {
+					if !child.HasDefaultVal {
 						child.DefaultVal = "{}"
+						child.HasDefaultVal = true
 					}
 					if alias != nil {
 						PopulateDefaults(alias, vv, aliases)
@@ -991,21 +1003,23 @@ func PopulateDefaults(n *Node, y interface{}, aliases map[string]*Node) {
 					continue
 				}
 
-				if child.DefaultVal == "" {
+				if !child.HasDefaultVal {
 					if b, err := sigyaml.Marshal(vv); err == nil {
 						child.DefaultVal = string(b)
 					} else {
 						child.DefaultVal = "{}"
 					}
+					child.HasDefaultVal = true
 				}
 
 			default:
-				if child.DefaultVal == "" {
+				if !child.HasDefaultVal {
 					if b, err := sigyaml.Marshal(vv); err == nil {
 						child.DefaultVal = string(b)
 					} else {
 						child.DefaultVal = fmt.Sprintf("%v", vv)
 					}
+					child.HasDefaultVal = true
 				}
 			}
 		}

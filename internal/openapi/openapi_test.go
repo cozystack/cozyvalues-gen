@@ -25,7 +25,8 @@ const monitoringSchema = `{
   "properties": {
     "host": {
       "description": "The hostname used to access the grafana externally",
-      "type": "string"
+      "type": "string",
+      "default": ""
     }
   }
 }`
