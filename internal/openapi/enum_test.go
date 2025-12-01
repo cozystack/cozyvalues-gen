@@ -149,3 +149,41 @@ httpAndHttps:
 	require.Contains(t, modeNode.Enums, "tcp", "Mode enum should contain 'tcp'")
 	require.Contains(t, modeNode.Enums, "tcp-with-proxy", "Mode enum should contain 'tcp-with-proxy'")
 }
+
+func TestEnumWithQuotesAndDots(t *testing.T) {
+	const yamlContent = `
+## @enum {string} Version - Kubernetes version
+## @value "v1.33"
+## @value "v1.32"
+## @value "v1.31"
+## @value v1.30
+## @value 'v1.29'
+
+## @param {Version} version - Kubernetes version
+version: "v1.33"
+`
+	tmpfile := writeTempFile(yamlContent)
+	defer os.Remove(tmpfile)
+
+	rows, err := Parse(tmpfile)
+	require.NoError(t, err)
+	root := Build(rows)
+
+	g := &gen{pkg: "values"}
+	formatted, _, err := g.Generate(root)
+	require.NoError(t, err)
+	code := string(formatted)
+
+	// Check that enum with quotes and dots is parsed correctly
+	require.Contains(t, code, "type Version string", "enum should generate type alias")
+	require.Contains(t, code, `+kubebuilder:validation:Enum="v1.33";"v1.32";"v1.31";"v1.30";"v1.29"`, "enum should have all values including quoted ones")
+
+	// Check that the enum values are correctly stored (without quotes)
+	versionNode := root.Child["Version"]
+	require.NotNil(t, versionNode, "Version enum node should exist")
+	require.Contains(t, versionNode.Enums, "v1.33", "Version enum should contain 'v1.33'")
+	require.Contains(t, versionNode.Enums, "v1.32", "Version enum should contain 'v1.32'")
+	require.Contains(t, versionNode.Enums, "v1.31", "Version enum should contain 'v1.31'")
+	require.Contains(t, versionNode.Enums, "v1.30", "Version enum should contain 'v1.30'")
+	require.Contains(t, versionNode.Enums, "v1.29", "Version enum should contain 'v1.29'")
+}

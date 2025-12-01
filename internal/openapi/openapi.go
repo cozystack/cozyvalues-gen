@@ -69,8 +69,8 @@ var (
 	reTypedef = regexp.MustCompile(`^#{1,}\s+@typedef\s+\{(struct|object)\}\s+(\w+)(?:\s+-\s+(.*))?$`)
 	// ## @enum {type} EnumName
 	reEnum = regexp.MustCompile(`^#{1,}\s+@enum\s+\{([^}]+)\}\s+(\w+)(?:\s+-\s+(.*))?$`)
-	// ## @value valueName (supports hyphens and underscores: tcp-with-proxy)
-	reEnumValue = regexp.MustCompile(`^#{1,}\s+@value\s+([-\w]+)(?:\s+-\s+(.*))?$`)
+	// ## @value valueName (supports hyphens, underscores, dots, and quoted strings: tcp-with-proxy, v1.33, "v1.33")
+	reEnumValue = regexp.MustCompile(`^#{1,}\s+@value\s+("([^"]+)"|'([^']+)'|([-\w.]+))(?:\s+-\s+(.*))?$`)
 )
 
 // additional string-format aliases
@@ -125,7 +125,23 @@ func Parse(file string) ([]Raw, error) {
 
 		// Check for enum value
 		if m := reEnumValue.FindStringSubmatch(line); m != nil && currentEnum != nil {
-			enumValues = append(enumValues, m[1])
+			var value string
+			// Extract value from the appropriate capture group
+			if len(m) > 2 && m[2] != "" {
+				// Double-quoted value
+				value = m[2]
+			} else if len(m) > 3 && m[3] != "" {
+				// Single-quoted value
+				value = m[3]
+			} else if len(m) > 4 && m[4] != "" {
+				// Unquoted value
+				value = m[4]
+			} else {
+				// Fallback to first group (shouldn't happen, but safe)
+				value = m[1]
+				value = strings.Trim(value, `"'`)
+			}
+			enumValues = append(enumValues, value)
 			continue
 		}
 
