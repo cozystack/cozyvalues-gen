@@ -12,6 +12,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/cozystack/cozyvalues-gen/internal/patterns"
 	"go.etcd.io/etcd/version"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"sigs.k8s.io/controller-tools/pkg/crd"
@@ -55,22 +56,13 @@ type Raw struct {
 	OmitEmpty   bool // Field marked with [name] for omitempty
 }
 
-// JSDoc-like syntax patterns
+// JSDoc-like syntax patterns (using shared patterns from internal/patterns)
 var (
-	// Default value pattern: accepts quoted strings, JSON objects/arrays, booleans, numbers (with decimals), null, or simple tokens
-	// Matches: "foo bar", 'text', {"a":1}, [1,2], true, false, null, -3.5, 42, simpleToken
-	defaultValuePattern = `(?:"[^"]*"|'[^']*'|\{[^}]*\}|\[[^\]]*\]|true|false|null|-?\d+(?:\.\d+)?|\S+)`
-
-	// ## @param {type} name - description or ## @param {type} [name]=defaultValue - description
-	reParam = regexp.MustCompile(`^#{1,}\s+@param\s+\{([^}]+)\}\s+(\[?\w+\]?)(?:=(` + defaultValuePattern + `))?(?:\s+-\s+(.*))?$`)
-	// ## @field {type} [name] - description  or  ## @field {type} name=defaultValue - description
-	reField = regexp.MustCompile(`^#{1,}\s+@(?:field|property)\s+\{([^}]+)\}\s+(\[?\w+\]?)(?:=(` + defaultValuePattern + `))?(?:\s+-\s+(.*))?$`)
-	// ## @typedef {struct|object} TypeName - description
-	reTypedef = regexp.MustCompile(`^#{1,}\s+@typedef\s+\{(struct|object)\}\s+(\w+)(?:\s+-\s+(.*))?$`)
-	// ## @enum {type} EnumName
-	reEnum = regexp.MustCompile(`^#{1,}\s+@enum\s+\{([^}]+)\}\s+(\w+)(?:\s+-\s+(.*))?$`)
-	// ## @value valueName (supports hyphens, underscores, dots, and quoted strings: tcp-with-proxy, v1.33, "v1.33")
-	reEnumValue = regexp.MustCompile(`^#{1,}\s+@value\s+("([^"]+)"|'([^']+)'|([-\w.]+))(?:\s+-\s+(.*))?$`)
+	reParam     = regexp.MustCompile(patterns.ParamPattern)
+	reField     = regexp.MustCompile(patterns.FieldPattern)
+	reTypedef   = regexp.MustCompile(patterns.TypedefPattern)
+	reEnum      = regexp.MustCompile(patterns.EnumPattern)
+	reEnumValue = regexp.MustCompile(patterns.EnumValuePattern)
 )
 
 // additional string-format aliases
@@ -168,9 +160,12 @@ func Parse(file string) ([]Raw, error) {
 				desc = m[4]
 			}
 
+			// Split dotted path into segments (e.g., "qdrant.persistence.size" -> ["qdrant", "persistence", "size"])
+			path := strings.Split(name, ".")
+
 			r := Raw{
 				K:           kParam,
-				Path:        []string{name},
+				Path:        path,
 				TypeExpr:    typeExpr,
 				DefaultVal:  defaultVal,
 				Description: desc,
@@ -190,10 +185,10 @@ func Parse(file string) ([]Raw, error) {
 				enumValues = nil
 			}
 
-			typeName := m[2]
+			typeName := m[1]
 			desc := ""
-			if len(m) > 3 {
-				desc = m[3]
+			if len(m) > 2 {
+				desc = m[2]
 			}
 
 			r := Raw{
@@ -347,15 +342,28 @@ func Build(rows []Raw) *Node {
 		}
 
 		if r.K == kParam {
-			cur := ensure(root, r.Path[0])
-			cur.IsParam = true
-			cur.TypeExpr = r.TypeExpr
-			cur.Comment = r.Description
-			cur.Enums = r.Enums
-			cur.OmitEmpty = r.OmitEmpty
-			if r.DefaultVal != "" {
-				cur.DefaultVal = r.DefaultVal
-				cur.HasDefaultVal = true
+			// Walk the dotted path, creating intermediate nodes as needed
+			cur := root
+			for i, segment := range r.Path {
+				cur = ensure(cur, segment)
+
+				// Only the last segment is the actual parameter
+				if i == len(r.Path)-1 {
+					cur.IsParam = true
+					cur.TypeExpr = r.TypeExpr
+					cur.Comment = r.Description
+					cur.Enums = r.Enums
+					cur.OmitEmpty = r.OmitEmpty
+					if r.DefaultVal != "" {
+						cur.DefaultVal = r.DefaultVal
+						cur.HasDefaultVal = true
+					}
+				} else {
+					// Intermediate nodes are implicit structs
+					if cur.TypeExpr == "" {
+						cur.TypeExpr = "struct"
+					}
+				}
 			}
 
 			// Add implicit types
@@ -534,14 +542,16 @@ func (g *gen) resolve(raw string) string {
 
 func (g *gen) goType(n *Node) string {
 	raw := strings.TrimSpace(n.TypeExpr)
-	if raw == "" {
-		if len(n.Child) > 0 {
-			c := camel(n.Name)
-			if c == "Config" || c == "ConfigSpec" {
-				return "Values" + c
-			}
-			return c
+	// For nodes that are containers (have children) and TypeExpr is empty or "struct",
+	// return the camelCased node name as the struct type
+	if (raw == "" || raw == "struct") && len(n.Child) > 0 {
+		c := camel(n.Name)
+		if c == "Config" || c == "ConfigSpec" {
+			return "Values" + c
 		}
+		return c
+	}
+	if raw == "" {
 		return "string"
 	}
 	if strings.HasPrefix(raw, "*") {
@@ -609,7 +619,8 @@ func (g *gen) writeStruct(n *Node) {
 		keys := sortedKeys(n.Child)
 		for _, k := range keys {
 			c := n.Child[k]
-			if !c.IsParam {
+			// Include node if it's a param OR if it has children (intermediate node for dotted paths)
+			if !c.IsParam && len(c.Child) == 0 {
 				continue
 			}
 			g.emitField(c)

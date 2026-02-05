@@ -1,0 +1,39 @@
+## @section Umbrella Chart Example
+## This example demonstrates nested dotted paths for umbrella charts
+## with vendored subcharts.
+
+## @param {int} qdrant.replicaCount - Number of Qdrant replicas
+## @param {object} qdrant.resources - Resource requests and limits
+## @param {quantity} qdrant.persistence.size - Persistent volume size
+## @param {string} [qdrant.persistence.storageClassName] - StorageClass name
+## @param {bool} qdrant.apiKey - Enable API key authentication
+## @param {string} qdrant.service.type - Kubernetes Service type
+qdrant:
+  replicaCount: 1
+  resources: {}
+  persistence:
+    size: 10Gi
+    storageClassName: ""
+  apiKey: true
+  service:
+    type: ClusterIP
+
+## @section Multi-Subchart Example
+## Example with multiple subcharts
+
+## @param {int} redis.replicas - Number of Redis replicas
+## @param {quantity} redis.persistence.size - Redis storage size
+redis:
+  replicas: 3
+  persistence:
+    size: 5Gi
+
+## @param {string} postgres.version - PostgreSQL version
+## @param {quantity} postgres.persistence.size - PostgreSQL storage size
+## @param {bool} postgres.metrics.enabled - Enable Prometheus metrics
+postgres:
+  version: "16"
+  persistence:
+    size: 20Gi
+  metrics:
+    enabled: true

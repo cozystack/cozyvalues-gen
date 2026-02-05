@@ -931,3 +931,658 @@ controlPlane:
 	require.Equal(t, true, cpu["x-kubernetes-int-or-string"])
 	require.Equal(t, true, mem["x-kubernetes-int-or-string"])
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Dotted Path Support (Nested Structures for Umbrella Charts)               */
+/* -------------------------------------------------------------------------- */
+
+// TestParseDottedPath_SingleLevel verifies backward compatibility:
+// a simple param without dots should produce a single-element Path.
+func TestParseDottedPath_SingleLevel(t *testing.T) {
+	const yaml = `
+## @param {int} replicas - Number of replicas
+replicas: 3
+`
+	rows, err := Parse(writeTempFile(yaml))
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	r := rows[0]
+	require.Equal(t, kParam, r.K)
+	require.Equal(t, []string{"replicas"}, r.Path, "single-level param must have one-element Path")
+	require.Equal(t, "int", r.TypeExpr)
+	require.Equal(t, "Number of replicas", r.Description)
+}
+
+// TestParseDottedPath_TwoLevels verifies parsing of two-level dotted path.
+func TestParseDottedPath_TwoLevels(t *testing.T) {
+	const yaml = `
+## @param {int} qdrant.replicaCount - Number of Qdrant replicas
+qdrant:
+  replicaCount: 1
+`
+	rows, err := Parse(writeTempFile(yaml))
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	r := rows[0]
+	require.Equal(t, kParam, r.K)
+	require.Equal(t, []string{"qdrant", "replicaCount"}, r.Path,
+		"two-level dotted path must split into two Path elements")
+	require.Equal(t, "int", r.TypeExpr)
+	require.Equal(t, "Number of Qdrant replicas", r.Description)
+}
+
+// TestParseDottedPath_ThreeLevels verifies parsing of three-level dotted path.
+func TestParseDottedPath_ThreeLevels(t *testing.T) {
+	const yaml = `
+## @param {quantity} qdrant.persistence.size - Storage size
+qdrant:
+  persistence:
+    size: 10Gi
+`
+	rows, err := Parse(writeTempFile(yaml))
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	r := rows[0]
+	require.Equal(t, []string{"qdrant", "persistence", "size"}, r.Path,
+		"three-level dotted path must split into three Path elements")
+	require.Equal(t, "quantity", r.TypeExpr)
+}
+
+// TestParseDottedPath_DeepNesting verifies parsing of deeply nested paths (5 levels).
+func TestParseDottedPath_DeepNesting(t *testing.T) {
+	const yaml = `
+## @param {string} a.b.c.d.e - Deep nested value
+a:
+  b:
+    c:
+      d:
+        e: "deep"
+`
+	rows, err := Parse(writeTempFile(yaml))
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	r := rows[0]
+	require.Equal(t, []string{"a", "b", "c", "d", "e"}, r.Path,
+		"five-level dotted path must split into five Path elements")
+}
+
+// TestParseDottedPath_Optional verifies optional parameter with dotted path.
+func TestParseDottedPath_Optional(t *testing.T) {
+	const yaml = `
+## @param {string} [qdrant.persistence.storageClassName] - StorageClass name
+qdrant:
+  persistence:
+    storageClassName: ""
+`
+	rows, err := Parse(writeTempFile(yaml))
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	r := rows[0]
+	require.Equal(t, []string{"qdrant", "persistence", "storageClassName"}, r.Path)
+	require.True(t, r.OmitEmpty, "optional param with [] must have OmitEmpty=true")
+}
+
+// TestParseDottedPath_WithDefault verifies param with dotted path and default value.
+func TestParseDottedPath_WithDefault(t *testing.T) {
+	const yaml = `
+## @param {int} qdrant.port=6333 - Qdrant port
+qdrant:
+  port: 6333
+`
+	rows, err := Parse(writeTempFile(yaml))
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	r := rows[0]
+	require.Equal(t, []string{"qdrant", "port"}, r.Path)
+	require.Equal(t, "6333", r.DefaultVal)
+}
+
+// TestParseDottedPath_OptionalWithDefault verifies optional param with default.
+func TestParseDottedPath_OptionalWithDefault(t *testing.T) {
+	const yaml = `
+## @param {string} [qdrant.config.path]=/data - Config path
+qdrant:
+  config:
+    path: /data
+`
+	rows, err := Parse(writeTempFile(yaml))
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	r := rows[0]
+	require.Equal(t, []string{"qdrant", "config", "path"}, r.Path)
+	require.True(t, r.OmitEmpty)
+	require.Equal(t, "/data", r.DefaultVal)
+}
+
+// TestParseDottedPath_WithUnderscores verifies paths containing underscores.
+func TestParseDottedPath_WithUnderscores(t *testing.T) {
+	const yaml = `
+## @param {string} my_app.my_config.my_value - Value with underscores
+my_app:
+  my_config:
+    my_value: "test"
+`
+	rows, err := Parse(writeTempFile(yaml))
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	r := rows[0]
+	require.Equal(t, []string{"my_app", "my_config", "my_value"}, r.Path,
+		"underscores in path segments must be preserved")
+}
+
+// TestParseDottedPath_WithNumbers verifies paths containing numbers.
+func TestParseDottedPath_WithNumbers(t *testing.T) {
+	const yaml = `
+## @param {int} v1.config2.port3 - Port
+v1:
+  config2:
+    port3: 8080
+`
+	rows, err := Parse(writeTempFile(yaml))
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	r := rows[0]
+	require.Equal(t, []string{"v1", "config2", "port3"}, r.Path,
+		"numbers in path segments must be preserved")
+}
+
+// TestParseDottedPath_MultipleParams verifies multiple dotted path params in one file.
+func TestParseDottedPath_MultipleParams(t *testing.T) {
+	const yaml = `
+## @param {int} qdrant.replicaCount - Replicas
+## @param {quantity} qdrant.persistence.size - Storage size
+## @param {string} [qdrant.persistence.storageClassName] - StorageClass
+## @param {bool} qdrant.apiKey - Enable API key
+qdrant:
+  replicaCount: 1
+  persistence:
+    size: 10Gi
+    storageClassName: ""
+  apiKey: true
+`
+	rows, err := Parse(writeTempFile(yaml))
+	require.NoError(t, err)
+	require.Len(t, rows, 4)
+
+	require.Equal(t, []string{"qdrant", "replicaCount"}, rows[0].Path)
+	require.Equal(t, []string{"qdrant", "persistence", "size"}, rows[1].Path)
+	require.Equal(t, []string{"qdrant", "persistence", "storageClassName"}, rows[2].Path)
+	require.True(t, rows[2].OmitEmpty)
+	require.Equal(t, []string{"qdrant", "apiKey"}, rows[3].Path)
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Build() with Dotted Paths                                                 */
+/* -------------------------------------------------------------------------- */
+
+// TestBuildDottedPath_CreatesIntermediateNodes verifies that Build creates
+// intermediate struct nodes for dotted paths.
+func TestBuildDottedPath_CreatesIntermediateNodes(t *testing.T) {
+	rows := []Raw{
+		{K: kParam, Path: []string{"qdrant", "persistence", "size"}, TypeExpr: "quantity", Description: "Storage size"},
+	}
+
+	root := Build(rows)
+
+	// Root should have "qdrant" child
+	require.Contains(t, root.Child, "qdrant", "root must have 'qdrant' child")
+	qdrant := root.Child["qdrant"]
+	require.Equal(t, "struct", qdrant.TypeExpr, "intermediate node must be struct")
+
+	// Qdrant should have "persistence" child
+	require.Contains(t, qdrant.Child, "persistence", "qdrant must have 'persistence' child")
+	persistence := qdrant.Child["persistence"]
+	require.Equal(t, "struct", persistence.TypeExpr, "intermediate node must be struct")
+
+	// Persistence should have "size" child
+	require.Contains(t, persistence.Child, "size", "persistence must have 'size' child")
+	size := persistence.Child["size"]
+	require.Equal(t, "quantity", size.TypeExpr, "leaf node must have specified type")
+	require.True(t, size.IsParam, "leaf node must be marked as param")
+	require.Equal(t, "Storage size", size.Comment)
+}
+
+// TestBuildDottedPath_SharedPrefix verifies that multiple params with shared
+// prefix reuse intermediate nodes.
+func TestBuildDottedPath_SharedPrefix(t *testing.T) {
+	rows := []Raw{
+		{K: kParam, Path: []string{"qdrant", "replicaCount"}, TypeExpr: "int", Description: "Replicas"},
+		{K: kParam, Path: []string{"qdrant", "apiKey"}, TypeExpr: "bool", Description: "API key"},
+	}
+
+	root := Build(rows)
+
+	// Only one "qdrant" node should exist
+	require.Contains(t, root.Child, "qdrant")
+	qdrant := root.Child["qdrant"]
+
+	// Qdrant should have both children
+	require.Len(t, qdrant.Child, 2, "qdrant must have exactly 2 children")
+	require.Contains(t, qdrant.Child, "replicaCount")
+	require.Contains(t, qdrant.Child, "apiKey")
+}
+
+// TestBuildDottedPath_DeeplySharedPrefix verifies reuse of deeply nested shared paths.
+func TestBuildDottedPath_DeeplySharedPrefix(t *testing.T) {
+	rows := []Raw{
+		{K: kParam, Path: []string{"qdrant", "persistence", "size"}, TypeExpr: "quantity", Description: "Size"},
+		{K: kParam, Path: []string{"qdrant", "persistence", "storageClassName"}, TypeExpr: "string", Description: "StorageClass"},
+		{K: kParam, Path: []string{"qdrant", "replicaCount"}, TypeExpr: "int", Description: "Replicas"},
+	}
+
+	root := Build(rows)
+
+	qdrant := root.Child["qdrant"]
+	require.Len(t, qdrant.Child, 2, "qdrant must have 2 children: persistence and replicaCount")
+
+	persistence := qdrant.Child["persistence"]
+	require.Len(t, persistence.Child, 2, "persistence must have 2 children: size and storageClassName")
+}
+
+// TestBuildDottedPath_PreservesProperties verifies all param properties are set on leaf node.
+func TestBuildDottedPath_PreservesProperties(t *testing.T) {
+	rows := []Raw{
+		{
+			K:           kParam,
+			Path:        []string{"app", "config", "value"},
+			TypeExpr:    "string",
+			Description: "Config value",
+			OmitEmpty:   true,
+			DefaultVal:  "default",
+		},
+	}
+
+	root := Build(rows)
+	leaf := root.Child["app"].Child["config"].Child["value"]
+
+	require.Equal(t, "string", leaf.TypeExpr)
+	require.Equal(t, "Config value", leaf.Comment)
+	require.True(t, leaf.OmitEmpty)
+	require.Equal(t, "default", leaf.DefaultVal)
+	require.True(t, leaf.HasDefaultVal)
+	require.True(t, leaf.IsParam)
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Dotted Paths with @typedef/@field (Mixed Usage)                           */
+/* -------------------------------------------------------------------------- */
+
+// TestBuildDottedPath_MixedWithTypedef verifies dotted paths work alongside @typedef.
+func TestBuildDottedPath_MixedWithTypedef(t *testing.T) {
+	rows := []Raw{
+		// Traditional @typedef approach
+		{K: kTypedef, Path: []string{"Persistence"}, TypeExpr: "struct", Description: "Storage config"},
+		{K: kField, Path: []string{"Persistence", "size"}, TypeExpr: "quantity", Description: "Size"},
+		// Dotted path approach
+		{K: kParam, Path: []string{"qdrant", "persistence", "storageClassName"}, TypeExpr: "string", Description: "StorageClass"},
+		// Using typedef as type
+		{K: kParam, Path: []string{"redis", "persistence"}, TypeExpr: "Persistence", Description: "Redis storage"},
+	}
+
+	root := Build(rows)
+
+	// Typedef should create its own node
+	require.Contains(t, root.Child, "Persistence")
+	require.Contains(t, root.Child["Persistence"].Child, "size")
+
+	// Dotted path should create nested structure
+	require.Contains(t, root.Child, "qdrant")
+	require.Contains(t, root.Child["qdrant"].Child, "persistence")
+	require.Contains(t, root.Child["qdrant"].Child["persistence"].Child, "storageClassName")
+
+	// Redis should use Persistence type
+	require.Contains(t, root.Child, "redis")
+	require.Equal(t, "Persistence", root.Child["redis"].Child["persistence"].TypeExpr)
+}
+
+// TestBuildDottedPath_BackwardCompatibility ensures existing @typedef/@field still works.
+func TestBuildDottedPath_BackwardCompatibility(t *testing.T) {
+	// This is the traditional approach that must continue to work
+	const yaml = `
+## @typedef {struct} Persistence - Storage configuration
+## @field {quantity} size - PVC size
+## @field {string} [storageClassName] - StorageClass name
+
+## @typedef {struct} Qdrant - Qdrant configuration
+## @field {int} replicaCount - Number of replicas
+## @field {Persistence} persistence - Storage settings
+
+## @param {Qdrant} qdrant - Qdrant subchart values
+qdrant:
+  replicaCount: 1
+  persistence:
+    size: 10Gi
+    storageClassName: ""
+`
+	rows, err := Parse(writeTempFile(yaml))
+	require.NoError(t, err)
+
+	root := Build(rows)
+
+	// Verify structure created by @typedef
+	require.Contains(t, root.Child, "Persistence")
+	require.Contains(t, root.Child, "Qdrant")
+	require.Contains(t, root.Child, "qdrant")
+
+	// Qdrant typedef fields
+	require.Contains(t, root.Child["Qdrant"].Child, "replicaCount")
+	require.Contains(t, root.Child["Qdrant"].Child, "persistence")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  End-to-End: Dotted Paths → JSON Schema                                    */
+/* -------------------------------------------------------------------------- */
+
+// TestDottedPath_EndToEndSchemaGeneration verifies full pipeline from dotted
+// path annotations to JSON Schema with nested objects.
+func TestDottedPath_EndToEndSchemaGeneration(t *testing.T) {
+	const yamlContent = `
+## @param {int} qdrant.replicaCount - Number of Qdrant replicas
+## @param {quantity} qdrant.persistence.size - Storage size
+## @param {string} [qdrant.persistence.storageClassName] - StorageClass name
+## @param {bool} qdrant.apiKey - Enable API key authentication
+qdrant:
+  replicaCount: 1
+  persistence:
+    size: 10Gi
+    storageClassName: ""
+  apiKey: true
+`
+	tmpfile := writeTempFile(yamlContent)
+	rows, err := Parse(tmpfile)
+	require.NoError(t, err)
+
+	root := Build(rows)
+
+	// Populate defaults from YAML
+	var parsed interface{}
+	require.NoError(t, yaml.Unmarshal([]byte(yamlContent), &parsed))
+	aliases := map[string]*Node{}
+	for _, n := range root.Child {
+		aliases[n.Name] = n
+	}
+	PopulateDefaults(root, parsed, aliases)
+
+	// Generate Go and CRD
+	tmpdir, gofile, err := WriteGeneratedGoAndStub(root, "values")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpdir)
+
+	crdBytes, err := CG(filepath.Dir(gofile))
+	require.NoError(t, err)
+
+	outfile := filepath.Join(tmpdir, "schema.json")
+	require.NoError(t, WriteValuesSchema(crdBytes, outfile))
+
+	raw, err := os.ReadFile(outfile)
+	require.NoError(t, err)
+
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(raw, &schema))
+
+	// Verify nested structure in schema
+	props := schema["properties"].(map[string]any)
+	require.Contains(t, props, "qdrant", "schema must have qdrant property")
+
+	qdrant := props["qdrant"].(map[string]any)
+	require.Equal(t, "object", qdrant["type"])
+
+	qdrantProps := qdrant["properties"].(map[string]any)
+	require.Contains(t, qdrantProps, "replicaCount")
+	require.Contains(t, qdrantProps, "persistence")
+	require.Contains(t, qdrantProps, "apiKey")
+
+	// Verify deeply nested persistence
+	persistence := qdrantProps["persistence"].(map[string]any)
+	require.Equal(t, "object", persistence["type"])
+
+	persistenceProps := persistence["properties"].(map[string]any)
+	require.Contains(t, persistenceProps, "size")
+	require.Contains(t, persistenceProps, "storageClassName")
+
+	// Verify types
+	replicaCount := qdrantProps["replicaCount"].(map[string]any)
+	require.Equal(t, "integer", replicaCount["type"])
+
+	apiKey := qdrantProps["apiKey"].(map[string]any)
+	require.Equal(t, "boolean", apiKey["type"])
+}
+
+// TestDottedPath_MultipleSubcharts verifies schema generation for multiple subcharts.
+func TestDottedPath_MultipleSubcharts(t *testing.T) {
+	const yaml = `
+## @param {int} qdrant.replicas - Qdrant replicas
+## @param {int} redis.replicas - Redis replicas
+## @param {int} postgres.replicas - Postgres replicas
+qdrant:
+  replicas: 1
+redis:
+  replicas: 3
+postgres:
+  replicas: 2
+`
+	tmpfile := writeTempFile(yaml)
+	rows, err := Parse(tmpfile)
+	require.NoError(t, err)
+
+	root := Build(rows)
+
+	tmpdir, gofile, err := WriteGeneratedGoAndStub(root, "values")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpdir)
+
+	crdBytes, err := CG(filepath.Dir(gofile))
+	require.NoError(t, err)
+
+	outfile := filepath.Join(tmpdir, "schema.json")
+	require.NoError(t, WriteValuesSchema(crdBytes, outfile))
+
+	raw, err := os.ReadFile(outfile)
+	require.NoError(t, err)
+
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(raw, &schema))
+
+	props := schema["properties"].(map[string]any)
+
+	// All three subcharts must be present
+	for _, name := range []string{"qdrant", "redis", "postgres"} {
+		require.Contains(t, props, name, "schema must have %s property", name)
+		sub := props[name].(map[string]any)
+		require.Equal(t, "object", sub["type"])
+		subProps := sub["properties"].(map[string]any)
+		require.Contains(t, subProps, "replicas")
+	}
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Complex Types with Dotted Paths                                           */
+/* -------------------------------------------------------------------------- */
+
+// TestDottedPath_ArrayType verifies array types work with dotted paths.
+func TestDottedPath_ArrayType(t *testing.T) {
+	const yaml = `
+## @param {[]string} app.config.tags - List of tags
+app:
+  config:
+    tags:
+    - production
+    - backend
+`
+	rows, err := Parse(writeTempFile(yaml))
+	require.NoError(t, err)
+
+	root := Build(rows)
+	leaf := root.Child["app"].Child["config"].Child["tags"]
+	require.Equal(t, "[]string", leaf.TypeExpr)
+}
+
+// TestDottedPath_MapType verifies map types work with dotted paths.
+func TestDottedPath_MapType(t *testing.T) {
+	const yaml = `
+## @param {map[string]string} app.config.labels - Labels
+app:
+  config:
+    labels:
+      app: myapp
+`
+	rows, err := Parse(writeTempFile(yaml))
+	require.NoError(t, err)
+
+	root := Build(rows)
+	leaf := root.Child["app"].Child["config"].Child["labels"]
+	require.Equal(t, "map[string]string", leaf.TypeExpr)
+}
+
+// TestDottedPath_PointerType verifies pointer types work with dotted paths.
+func TestDottedPath_PointerType(t *testing.T) {
+	const yaml = `
+## @param {*string} app.config.optional - Optional value
+app:
+  config:
+    optional: null
+`
+	rows, err := Parse(writeTempFile(yaml))
+	require.NoError(t, err)
+
+	root := Build(rows)
+	leaf := root.Child["app"].Child["config"].Child["optional"]
+	require.Equal(t, "*string", leaf.TypeExpr)
+}
+
+// TestDottedPath_ConflictWithExplicitParam tests behavior when both an explicit param
+// and a dotted path param target the same node.
+// The dotted path should override intermediate node properties but preserve the param status.
+func TestDottedPath_ConflictWithExplicitParam(t *testing.T) {
+	const yaml = `
+## @param {object} qdrant - Qdrant configuration
+## @param {int} qdrant.replicaCount - Number of replicas
+qdrant:
+  replicaCount: 3
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+
+	root := Build(rows)
+
+	// qdrant should be a param with object type (from explicit param)
+	require.True(t, root.Child["qdrant"].IsParam)
+	require.Equal(t, "object", root.Child["qdrant"].TypeExpr)
+
+	// qdrant.replicaCount should also exist as a param
+	require.True(t, root.Child["qdrant"].Child["replicaCount"].IsParam)
+	require.Equal(t, "int", root.Child["qdrant"].Child["replicaCount"].TypeExpr)
+}
+
+// TestDottedPath_ExplicitParamOverridesDottedPath verifies that when a dotted path
+// creates an intermediate node as "struct", a later explicit param with different type wins.
+func TestDottedPath_ExplicitParamOverridesDottedPath(t *testing.T) {
+	const yaml = `
+## @param {int} qdrant.replicaCount - Number of replicas
+## @param {Qdrant} qdrant - Qdrant configuration
+qdrant:
+  replicaCount: 3
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+
+	root := Build(rows)
+
+	// qdrant was first created as implicit struct, then overridden by explicit Qdrant param
+	require.True(t, root.Child["qdrant"].IsParam)
+	require.Equal(t, "Qdrant", root.Child["qdrant"].TypeExpr)
+
+	// qdrant.replicaCount should still exist
+	require.True(t, root.Child["qdrant"].Child["replicaCount"].IsParam)
+}
+
+// TestDottedPath_ConflictLeafAndIntermediate tests conflict when same name is both
+// a leaf param and an intermediate node for another dotted path.
+func TestDottedPath_ConflictLeafAndIntermediate(t *testing.T) {
+	const yaml = `
+## @param {string} qdrant - Qdrant as string
+## @param {int} qdrant.replicas - Replicas count
+qdrant:
+  replicas: 3
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+
+	root := Build(rows)
+
+	// qdrant should exist and be a param (from first @param)
+	require.NotNil(t, root.Child["qdrant"])
+	require.True(t, root.Child["qdrant"].IsParam)
+	// The type should be preserved from explicit @param, not overwritten to "struct"
+	require.Equal(t, "string", root.Child["qdrant"].TypeExpr)
+
+	// qdrant.replicas should also exist as child
+	require.NotNil(t, root.Child["qdrant"].Child["replicas"])
+	require.True(t, root.Child["qdrant"].Child["replicas"].IsParam)
+}
+
+// TestParseDottedPath_InvalidPaths verifies that malformed paths are handled gracefully.
+func TestParseDottedPath_InvalidPaths(t *testing.T) {
+	// Path with leading dot - regex should not match this
+	const yaml1 = `
+## @param {string} .invalid - Leading dot
+value: test
+`
+	rows, err := Parse(writeTempFile(yaml1))
+	require.NoError(t, err)
+	// Should not parse as param (invalid format)
+	for _, r := range rows {
+		if r.K == 1 { // kParam
+			require.NotEqual(t, ".invalid", strings.Join(r.Path, "."),
+				"leading dot path should not be parsed")
+		}
+	}
+
+	// Path with trailing dot
+	const yaml2 = `
+## @param {string} invalid. - Trailing dot
+value: test
+`
+	rows2, err := Parse(writeTempFile(yaml2))
+	require.NoError(t, err)
+	for _, r := range rows2 {
+		if r.K == 1 { // kParam
+			require.NotEqual(t, "invalid.", strings.Join(r.Path, "."),
+				"trailing dot path should not be parsed")
+		}
+	}
+
+	// Path with consecutive dots
+	const yaml3 = `
+## @param {string} a..b - Consecutive dots
+value: test
+`
+	rows3, err := Parse(writeTempFile(yaml3))
+	require.NoError(t, err)
+	for _, r := range rows3 {
+		if r.K == 1 { // kParam
+			// If parsed, should not have empty segments
+			for _, seg := range r.Path {
+				require.NotEmpty(t, seg, "path segments should not be empty")
+			}
+		}
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cozystack/cozyvalues-gen/internal/patterns"
 	"gopkg.in/yaml.v3"
 )
 
@@ -123,18 +124,12 @@ func parseMetadataComments(path string) (*Meta, error) {
 	var current *Section
 	var allParams []ParamMeta
 
-	// Default value pattern: accepts quoted strings, JSON objects/arrays, booleans, numbers (with decimals), null, or simple tokens
-	defaultValuePattern := `(?:"[^"]*"|'[^']*'|\{[^}]*\}|\[[^\]]*\]|true|false|null|-?\d+(?:\.\d+)?|\S+)`
-
-	sectionRe := regexp.MustCompile(`^#{1,}\s+@section\s+(.*)$`)
-	// JSDoc-like syntax: @param {type} name - description
-	paramRe := regexp.MustCompile(`^#{1,}\s+@param\s+\{([^}]+)\}\s+(\[?\w+\]?)(?:=(` + defaultValuePattern + `))?(?:\s+-\s+(.*))?$`)
-	// JSDoc-like syntax: @field {type} name - description or @field {type} name=default - description
-	fieldRe := regexp.MustCompile(`^#{1,}\s+@(?:field|property)\s+\{([^}]+)\}\s+(\[?\w+\]?)(?:=(` + defaultValuePattern + `))?(?:\s+-\s+(.*))?$`)
-	// @typedef {struct} TypeName - description
-	typedefRe := regexp.MustCompile(`^#{1,}\s+@typedef\s+\{(?:struct|object)\}\s+(\w+)(?:\s+-\s+(.*))?$`)
-	// @enum {type} EnumName - description
-	enumRe := regexp.MustCompile(`^#{1,}\s+@enum\s+\{([^}]+)\}\s+(\w+)(?:\s+-\s+(.*))?$`)
+	// Use shared patterns from internal/patterns
+	sectionRe := regexp.MustCompile(patterns.SectionPattern)
+	paramRe := regexp.MustCompile(patterns.ParamPattern)
+	fieldRe := regexp.MustCompile(patterns.FieldPattern)
+	typedefRe := regexp.MustCompile(patterns.TypedefPattern)
+	enumRe := regexp.MustCompile(patterns.EnumPattern)
 
 	// ───────────── Parse all annotations in a single pass ─────────────
 	lines := strings.Split(string(data), "\n")
@@ -314,6 +309,29 @@ func renderAnnotationDefault(val string) string {
 	return fmt.Sprintf("`%s`", strings.Trim(s, `"`))
 }
 
+// lookupNested navigates through nested maps using a dotted path.
+// For example, "qdrant.persistence.size" will navigate:
+// valuesMap["qdrant"]["persistence"]["size"]
+func lookupNested(values map[string]any, path string) (any, bool) {
+	if path == "" {
+		return nil, false
+	}
+	parts := strings.Split(path, ".")
+	var current any = values
+	for _, part := range parts {
+		m, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		val, exists := m[part]
+		if !exists {
+			return nil, false
+		}
+		current = val
+	}
+	return current, true
+}
+
 // ---------------------------------------------------------------------------
 //
 //	BuildParamsToRender – table rows for README
@@ -338,11 +356,11 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 		isArrayPrim := isArray && (isPrimitive(baseType) || isEnum)
 		isPtrPrim := isPtr && isPrimitive(baseType)
 
-		val := defaultValueForType(orig)
+		var val string
 
 		switch {
 		case isArrayPrim:
-			raw, exists := valuesMap[pm.Name]
+			raw, exists := lookupNested(valuesMap, pm.Name)
 			if !exists {
 				if def, ok := extractAnnotationDefault(orig); ok {
 					val = renderAnnotationDefault(def)
@@ -354,7 +372,8 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 			}
 
 		case isArray:
-			if raw, ok := valuesMap[pm.Name].([]interface{}); ok {
+			rawVal, _ := lookupNested(valuesMap, pm.Name)
+			if raw, ok := rawVal.([]any); ok {
 				if len(raw) > 0 {
 					val = "`[...]`"
 				} else {
@@ -368,7 +387,8 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 
 		case isMap:
 			// Check if map is empty in values.yaml
-			if raw, ok := valuesMap[pm.Name].(map[string]interface{}); ok && len(raw) == 0 {
+			rawVal, _ := lookupNested(valuesMap, pm.Name)
+			if raw, ok := rawVal.(map[string]any); ok && len(raw) == 0 {
 				// Empty map always renders as {}
 				val = "`{}`"
 			} else if !isPrimitive(baseType) && len(typeFields[baseType]) > 0 {
@@ -381,7 +401,7 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 			}
 
 		case isPtrPrim:
-			raw, exists := valuesMap[pm.Name]
+			raw, exists := lookupNested(valuesMap, pm.Name)
 			if !exists {
 				if def, ok := extractAnnotationDefault(orig); ok {
 					val = renderAnnotationDefault(def)
@@ -393,7 +413,7 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 			}
 
 		case isPtr && (strings.HasPrefix(baseForKind, "[]") || strings.HasPrefix(baseForKind, "map[")):
-			raw, exists := valuesMap[pm.Name]
+			raw, exists := lookupNested(valuesMap, pm.Name)
 			if !exists {
 				if def, ok := extractAnnotationDefault(orig); ok {
 					val = renderAnnotationDefault(def)
@@ -419,7 +439,7 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 
 		case isEnum:
 			// Treat enums like primitives - extract actual value
-			raw, exists := valuesMap[pm.Name]
+			raw, exists := lookupNested(valuesMap, pm.Name)
 			if !exists {
 				if def, ok := extractAnnotationDefault(orig); ok {
 					val = renderAnnotationDefault(def)
@@ -438,7 +458,7 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 			}
 
 		default:
-			raw, exists := valuesMap[pm.Name]
+			raw, exists := lookupNested(valuesMap, pm.Name)
 			if !exists {
 				if def, ok := extractAnnotationDefault(orig); ok {
 					val = renderAnnotationDefault(def)
@@ -456,7 +476,8 @@ func buildParamsToRender(params []ParamMeta) []ParamToRender {
 			Type:        normalizeType(orig),
 			Value:       val,
 		})
-		out = append(out, traverseParam(pm, valuesMap[pm.Name], true)...)
+		rawForTraverse, _ := lookupNested(valuesMap, pm.Name)
+		out = append(out, traverseParam(pm, rawForTraverse, true)...)
 	}
 	return out
 }
@@ -894,10 +915,16 @@ func renderSection(sec *Section) string {
 	return fmt.Sprintf("\n### %s\n\n%s", sec.Name, markdownTable(rows))
 }
 
-func validateValues(params []ParamMeta, typeFields map[string][]FieldMeta, values map[string]interface{}, knownTypes map[string]bool) error {
+func validateValues(params []ParamMeta, typeFields map[string][]FieldMeta, values map[string]any, knownTypes map[string]bool) error {
 	paramMap := make(map[string]ParamMeta, len(params))
+	// Track which top-level keys have dotted path params (e.g., "postgres" has "postgres.version")
+	dottedPathRoots := make(map[string]bool)
 	for _, p := range params {
 		paramMap[p.Name] = p
+		// If param name contains a dot, mark the root as having dotted path params
+		if idx := strings.Index(p.Name, "."); idx > 0 {
+			dottedPathRoots[p.Name[:idx]] = true
+		}
 	}
 
 	var checkValue func(path string, val interface{}, typ string) error
@@ -989,7 +1016,15 @@ func validateValues(params []ParamMeta, typeFields map[string][]FieldMeta, value
 		v := values[k]
 		pm, exists := paramMap[k]
 		if !exists {
-			return fmt.Errorf("parameter '%s' is not defined in schema", k)
+			// Check if this key is covered by dotted path params (e.g., "postgres" covered by "postgres.version")
+			if !dottedPathRoots[k] {
+				return fmt.Errorf("parameter '%s' is not defined in schema", k)
+			}
+			// NOTE: Dotted path roots (e.g., "postgres" when "postgres.version" is defined)
+			// skip deep validation. This means extra fields in values.yaml under these roots
+			// won't cause validation errors. This is intentional for umbrella charts where
+			// subcharts may have additional fields not explicitly documented.
+			continue
 		}
 		if err := checkValue(k, v, pm.TypeOriginal); err != nil {
 			return err
