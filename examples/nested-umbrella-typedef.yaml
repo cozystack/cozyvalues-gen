@@ -1,0 +1,61 @@
+## @section Umbrella Chart Example (Explicit Types)
+## This example demonstrates the @typedef approach for umbrella charts.
+## Use this when you need full type validation and don't mind maintaining
+## type definitions that mirror the subchart structure.
+
+## @typedef {struct} Resources - Resource requests and limits
+## @field {quantity} [cpu] - CPU available to each replica
+## @field {quantity} [memory] - Memory available to each replica
+
+## @typedef {struct} Persistence - Persistence parameters
+## @field {quantity} size - Persistent volume size
+## @field {string} [storageClassName] - StorageClass name
+
+## @enum {string} ServiceType - Kubernetes Service type
+## @value ClusterIP
+## @value LoadBalancer
+## @value NodePort
+
+## @typedef {struct} Service - Service configuration
+## @field {ServiceType} type - Kubernetes Service type
+
+## @typedef {struct} Qdrant - Qdrant subchart configuration
+## @field {int} replicaCount - Number of Qdrant replicas
+## @field {Resources} [resources] - Resource requests and limits
+## @field {Persistence} [persistence] - Persistence settings
+## @field {bool} apiKey - Enable API key authentication
+## @field {Service} service - Service configuration
+
+## @param {Qdrant} qdrant - Qdrant configuration
+qdrant:
+  replicaCount: 1
+  resources: {}
+  persistence:
+    size: 10Gi
+    storageClassName: ""
+  apiKey: true
+  service:
+    type: ClusterIP
+
+## @section Multi-Subchart Example (Explicit Types)
+## When you have multiple vendored subcharts
+
+## @typedef {struct} Redis - Redis subchart configuration
+## @field {int} replicas - Number of Redis replicas
+## @field {Persistence} [persistence] - Persistence settings
+
+## @typedef {struct} Postgres - Postgres subchart configuration
+## @field {int} replicas - Number of Postgres replicas
+## @field {Persistence} [persistence] - Persistence settings
+
+## @param {Redis} redis - Redis configuration
+redis:
+  replicas: 3
+  persistence:
+    size: 5Gi
+
+## @param {Postgres} postgres - Postgres configuration
+postgres:
+  replicas: 2
+  persistence:
+    size: 20Gi

@@ -1,6 +1,7 @@
-## @section Umbrella Chart Example
-## This example demonstrates nested dotted paths for umbrella charts
-## with vendored subcharts.
+## @section Umbrella Chart Example (Dotted Paths)
+## Lightweight approach for umbrella charts with vendored subcharts.
+## Intermediate nodes become implicit structs; subchart handles its own validation.
+## For explicit typing, see nested-umbrella-typedef.yaml
 
 ## @param {int} qdrant.replicaCount - Number of Qdrant replicas
 ## @param {object} qdrant.resources - Resource requests and limits
