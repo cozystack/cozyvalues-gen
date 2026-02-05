@@ -6,15 +6,9 @@ package patterns
 // Examples: "foo bar", 'text', {"a":1}, [1,2], true, false, null, -3.5, 42, simpleToken
 const DefaultValuePattern = `(?:"[^"]*"|'[^']*'|\{[^}]*\}|\[[^\]]*\]|true|false|null|-?\d+(?:\.\d+)?|\S+)`
 
-// DottedPathPattern matches parameter names with optional dotted paths.
-// Supports paths like "name", "qdrant.replicaCount", "[optional.param]".
-// Path must start with word char, dots must be followed by word chars (no .foo, foo., or a..b).
-// The pattern requires balanced square brackets for optional parameters (either both or neither).
-const DottedPathPattern = `(?:\[\w+(?:\.\w+)*\]|\w+(?:\.\w+)*)`
-
 // ParamPattern is the full regex pattern for @param annotations.
 // Groups: 1=type, 2=name (with optional brackets), 3=default value, 4=description
-const ParamPattern = `^#{1,}\s+@param\s+\{([^}]+)\}\s+(` + DottedPathPattern + `)(?:=(` + DefaultValuePattern + `))?(?:\s+-\s+(.*))?$`
+const ParamPattern = `^#{1,}\s+@param\s+\{([^}]+)\}\s+(\[?\w+\]?)(?:=(` + DefaultValuePattern + `))?(?:\s+-\s+(.*))?$`
 
 // FieldPattern is the full regex pattern for @field/@property annotations.
 // Groups: 1=type, 2=name (with optional brackets), 3=default value, 4=description

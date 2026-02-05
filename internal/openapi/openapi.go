@@ -261,12 +261,9 @@ func Parse(file string) ([]Raw, error) {
 				desc = m[4]
 			}
 
-			// Split dotted path into segments (e.g., "qdrant.persistence.size" -> ["qdrant", "persistence", "size"])
-			path := strings.Split(name, ".")
-
 			r := Raw{
 				K:           kParam,
-				Path:        path,
+				Path:        []string{name},
 				TypeExpr:    typeExpr,
 				DefaultVal:  defaultVal,
 				Description: desc,
@@ -471,30 +468,17 @@ func Build(rows []Raw) *Node {
 		}
 
 		if r.K == kParam {
-			// Walk the dotted path, creating intermediate nodes as needed
-			cur := root
-			for i, segment := range r.Path {
-				cur = ensure(cur, segment)
-
-				// Only the last segment is the actual parameter
-				if i == len(r.Path)-1 {
-					cur.IsParam = true
-					cur.TypeExpr = r.TypeExpr
-					cur.Comment = r.Description
-					cur.Enums = r.Enums
-					cur.OmitEmpty = r.OmitEmpty
-					if r.DefaultVal != "" {
-						cur.DefaultVal = r.DefaultVal
-						cur.HasDefaultVal = true
-					}
-					copyConstraints(cur, &r)
-				} else {
-					// Intermediate nodes are implicit structs
-					if cur.TypeExpr == "" {
-						cur.TypeExpr = "struct"
-					}
-				}
+			cur := ensure(root, r.Path[0])
+			cur.IsParam = true
+			cur.TypeExpr = r.TypeExpr
+			cur.Comment = r.Description
+			cur.Enums = r.Enums
+			cur.OmitEmpty = r.OmitEmpty
+			if r.DefaultVal != "" {
+				cur.DefaultVal = r.DefaultVal
+				cur.HasDefaultVal = true
 			}
+			copyConstraints(cur, &r)
 
 			// Add implicit types
 			te := strings.TrimSpace(r.TypeExpr)
@@ -750,8 +734,7 @@ func (g *gen) writeStruct(n *Node) {
 		keys := sortedKeys(n.Child)
 		for _, k := range keys {
 			c := n.Child[k]
-			// Include node if it's a param OR if it has children (intermediate node for dotted paths)
-			if !c.IsParam && len(c.Child) == 0 {
+			if !c.IsParam {
 				continue
 			}
 			g.emitField(c)
