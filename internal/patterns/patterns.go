@@ -9,8 +9,8 @@ const DefaultValuePattern = `(?:"[^"]*"|'[^']*'|\{[^}]*\}|\[[^\]]*\]|true|false|
 // DottedPathPattern matches parameter names with optional dotted paths.
 // Supports paths like "name", "qdrant.replicaCount", "[optional.param]".
 // Path must start with word char, dots must be followed by word chars (no .foo, foo., or a..b).
-// The pattern includes optional square brackets for optional parameters.
-const DottedPathPattern = `\[?\w+(?:\.\w+)*\]?`
+// The pattern requires balanced square brackets for optional parameters (either both or neither).
+const DottedPathPattern = `(?:\[\w+(?:\.\w+)*\]|\w+(?:\.\w+)*)`
 
 // ParamPattern is the full regex pattern for @param annotations.
 // Groups: 1=type, 2=name (with optional brackets), 3=default value, 4=description
@@ -18,6 +18,7 @@ const ParamPattern = `^#{1,}\s+@param\s+\{([^}]+)\}\s+(` + DottedPathPattern + `
 
 // FieldPattern is the full regex pattern for @field/@property annotations.
 // Groups: 1=type, 2=name (with optional brackets), 3=default value, 4=description
+// Note: Fields do NOT support dotted paths - they belong to a parent @typedef.
 const FieldPattern = `^#{1,}\s+@(?:field|property)\s+\{([^}]+)\}\s+(\[?\w+\]?)(?:=(` + DefaultValuePattern + `))?(?:\s+-\s+(.*))?$`
 
 // TypedefPattern is the regex pattern for @typedef annotations.
@@ -36,3 +37,41 @@ const EnumValuePattern = `^#{1,}\s+@value\s+("([^"]+)"|'([^']+)'|([-\w.]+))(?:\s
 // SectionPattern is the regex pattern for @section annotations.
 // Groups: 1=section name
 const SectionPattern = `^#{1,}\s+@section\s+(.*)$`
+
+// Validation constraint patterns
+
+// MinimumPattern matches @minimum annotations with numeric value.
+// Groups: 1=numeric value (int or float, possibly negative)
+const MinimumPattern = `^#{1,}\s+@minimum\s+(-?\d+(?:\.\d+)?)\s*$`
+
+// MaximumPattern matches @maximum annotations with numeric value.
+// Groups: 1=numeric value (int or float, possibly negative)
+const MaximumPattern = `^#{1,}\s+@maximum\s+(-?\d+(?:\.\d+)?)\s*$`
+
+// ExclusiveMinimumPattern matches @exclusiveMinimum flag annotation.
+// No groups - presence indicates true
+const ExclusiveMinimumPattern = `^#{1,}\s+@exclusiveMinimum\s*$`
+
+// ExclusiveMaximumPattern matches @exclusiveMaximum flag annotation.
+// No groups - presence indicates true
+const ExclusiveMaximumPattern = `^#{1,}\s+@exclusiveMaximum\s*$`
+
+// MinLengthPattern matches @minLength annotations with integer value.
+// Groups: 1=integer value
+const MinLengthPattern = `^#{1,}\s+@minLength\s+(\d+)\s*$`
+
+// MaxLengthPattern matches @maxLength annotations with integer value.
+// Groups: 1=integer value
+const MaxLengthPattern = `^#{1,}\s+@maxLength\s+(\d+)\s*$`
+
+// RegexPatternPattern matches @pattern annotations with regex value.
+// Groups: 1=regex pattern (everything after @pattern and whitespace)
+const RegexPatternPattern = `^#{1,}\s+@pattern\s+(.+)$`
+
+// MinItemsPattern matches @minItems annotations with integer value.
+// Groups: 1=integer value
+const MinItemsPattern = `^#{1,}\s+@minItems\s+(\d+)\s*$`
+
+// MaxItemsPattern matches @maxItems annotations with integer value.
+// Groups: 1=integer value
+const MaxItemsPattern = `^#{1,}\s+@maxItems\s+(\d+)\s*$`

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -54,6 +55,17 @@ type Raw struct {
 	DefaultVal  string
 	Description string
 	OmitEmpty   bool // Field marked with [name] for omitempty
+
+	// Validation constraints
+	Minimum          *float64
+	Maximum          *float64
+	ExclusiveMinimum bool
+	ExclusiveMaximum bool
+	MinLength        *int64
+	MaxLength        *int64
+	Pattern          string
+	MinItems         *int64
+	MaxItems         *int64
 }
 
 // JSDoc-like syntax patterns (using shared patterns from internal/patterns)
@@ -63,6 +75,17 @@ var (
 	reTypedef   = regexp.MustCompile(patterns.TypedefPattern)
 	reEnum      = regexp.MustCompile(patterns.EnumPattern)
 	reEnumValue = regexp.MustCompile(patterns.EnumValuePattern)
+
+	// Validation constraint patterns
+	reMinimum          = regexp.MustCompile(patterns.MinimumPattern)
+	reMaximum          = regexp.MustCompile(patterns.MaximumPattern)
+	reExclusiveMinimum = regexp.MustCompile(patterns.ExclusiveMinimumPattern)
+	reExclusiveMaximum = regexp.MustCompile(patterns.ExclusiveMaximumPattern)
+	reMinLength        = regexp.MustCompile(patterns.MinLengthPattern)
+	reMaxLength        = regexp.MustCompile(patterns.MaxLengthPattern)
+	rePattern          = regexp.MustCompile(patterns.RegexPatternPattern)
+	reMinItems         = regexp.MustCompile(patterns.MinItemsPattern)
+	reMaxItems         = regexp.MustCompile(patterns.MaxItemsPattern)
 )
 
 // additional string-format aliases
@@ -111,6 +134,15 @@ func Parse(file string) ([]Raw, error) {
 	var out []Raw
 	var currentEnum *Raw
 	var enumValues []string
+	var lastAnnotated *Raw // Track last @param or @field to accumulate constraints
+
+	// finalizeLastAnnotated appends the last annotated item to output if it exists
+	finalizeLastAnnotated := func() {
+		if lastAnnotated != nil {
+			out = append(out, *lastAnnotated)
+			lastAnnotated = nil
+		}
+	}
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -137,9 +169,78 @@ func Parse(file string) ([]Raw, error) {
 			continue
 		}
 
+		// Check for validation constraints (apply to lastAnnotated @param or @field).
+		// Note: @section and other README-only annotations are not recognized here,
+		// so constraints continue to accumulate on the preceding @param/@field.
+		// This is intentional — @section is a README concept, not OpenAPI.
+		if lastAnnotated != nil {
+			paramName := strings.Join(lastAnnotated.Path, ".")
+			if m := reMinimum.FindStringSubmatch(line); m != nil {
+				val, err := strconv.ParseFloat(m[1], 64)
+				if err != nil {
+					return nil, fmt.Errorf("invalid @minimum value %q for %q: %w", m[1], paramName, err)
+				}
+				lastAnnotated.Minimum = &val
+				continue
+			}
+			if m := reMaximum.FindStringSubmatch(line); m != nil {
+				val, err := strconv.ParseFloat(m[1], 64)
+				if err != nil {
+					return nil, fmt.Errorf("invalid @maximum value %q for %q: %w", m[1], paramName, err)
+				}
+				lastAnnotated.Maximum = &val
+				continue
+			}
+			if reExclusiveMinimum.MatchString(line) {
+				lastAnnotated.ExclusiveMinimum = true
+				continue
+			}
+			if reExclusiveMaximum.MatchString(line) {
+				lastAnnotated.ExclusiveMaximum = true
+				continue
+			}
+			if m := reMinLength.FindStringSubmatch(line); m != nil {
+				val, err := strconv.ParseInt(m[1], 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("invalid @minLength value %q for %q: %w", m[1], paramName, err)
+				}
+				lastAnnotated.MinLength = &val
+				continue
+			}
+			if m := reMaxLength.FindStringSubmatch(line); m != nil {
+				val, err := strconv.ParseInt(m[1], 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("invalid @maxLength value %q for %q: %w", m[1], paramName, err)
+				}
+				lastAnnotated.MaxLength = &val
+				continue
+			}
+			if m := rePattern.FindStringSubmatch(line); m != nil {
+				lastAnnotated.Pattern = strings.TrimSpace(m[1])
+				continue
+			}
+			if m := reMinItems.FindStringSubmatch(line); m != nil {
+				val, err := strconv.ParseInt(m[1], 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("invalid @minItems value %q for %q: %w", m[1], paramName, err)
+				}
+				lastAnnotated.MinItems = &val
+				continue
+			}
+			if m := reMaxItems.FindStringSubmatch(line); m != nil {
+				val, err := strconv.ParseInt(m[1], 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("invalid @maxItems value %q for %q: %w", m[1], paramName, err)
+				}
+				lastAnnotated.MaxItems = &val
+				continue
+			}
+		}
+
 		// Check for @param
 		if m := reParam.FindStringSubmatch(line); m != nil {
-			// If we were collecting enum values, finalize the enum
+			// Finalize previous param and enum
+			finalizeLastAnnotated()
 			if currentEnum != nil {
 				currentEnum.Enums = enumValues
 				out = append(out, *currentEnum)
@@ -171,13 +272,14 @@ func Parse(file string) ([]Raw, error) {
 				Description: desc,
 				OmitEmpty:   omitEmpty,
 			}
-			out = append(out, r)
+			lastAnnotated = &r // Don't append yet, wait for constraints
 			continue
 		}
 
 		// Check for @typedef
 		if m := reTypedef.FindStringSubmatch(line); m != nil {
-			// If we were collecting enum values, finalize the enum
+			// Finalize previous param and enum
+			finalizeLastAnnotated()
 			if currentEnum != nil {
 				currentEnum.Enums = enumValues
 				out = append(out, *currentEnum)
@@ -203,7 +305,8 @@ func Parse(file string) ([]Raw, error) {
 
 		// Check for @enum
 		if m := reEnum.FindStringSubmatch(line); m != nil {
-			// If we were collecting enum values, finalize the previous enum
+			// Finalize previous param and enum
+			finalizeLastAnnotated()
 			if currentEnum != nil {
 				currentEnum.Enums = enumValues
 				out = append(out, *currentEnum)
@@ -229,7 +332,8 @@ func Parse(file string) ([]Raw, error) {
 
 		// Check for @field or @property
 		if m := reField.FindStringSubmatch(line); m != nil {
-			// If we were collecting enum values, finalize the enum
+			// Finalize previous param and enum
+			finalizeLastAnnotated()
 			if currentEnum != nil {
 				currentEnum.Enums = enumValues
 				out = append(out, *currentEnum)
@@ -268,13 +372,14 @@ func Parse(file string) ([]Raw, error) {
 					Description: desc,
 					OmitEmpty:   omitEmpty,
 				}
-				out = append(out, r)
+				lastAnnotated = &r // Don't append yet, wait for constraints
 			}
 			continue
 		}
 	}
 
-	// Finalize any pending enum
+	// Finalize any pending param and enum
+	finalizeLastAnnotated()
 	if currentEnum != nil {
 		currentEnum.Enums = enumValues
 		out = append(out, *currentEnum)
@@ -298,6 +403,17 @@ type Node struct {
 	OmitEmpty     bool
 	Parent        *Node
 	Child         map[string]*Node
+
+	// Validation constraints
+	Minimum          *float64
+	Maximum          *float64
+	ExclusiveMinimum bool
+	ExclusiveMaximum bool
+	MinLength        *int64
+	MaxLength        *int64
+	Pattern          string
+	MinItems         *int64
+	MaxItems         *int64
 }
 
 func newNode(name string, p *Node) *Node {
@@ -311,6 +427,19 @@ func ensure(root *Node, name string) *Node {
 	n := newNode(name, root)
 	root.Child[name] = n
 	return n
+}
+
+// copyConstraints transfers validation constraints from Raw to Node.
+func copyConstraints(node *Node, raw *Raw) {
+	node.Minimum = raw.Minimum
+	node.Maximum = raw.Maximum
+	node.ExclusiveMinimum = raw.ExclusiveMinimum
+	node.ExclusiveMaximum = raw.ExclusiveMaximum
+	node.MinLength = raw.MinLength
+	node.MaxLength = raw.MaxLength
+	node.Pattern = raw.Pattern
+	node.MinItems = raw.MinItems
+	node.MaxItems = raw.MaxItems
 }
 
 func Build(rows []Raw) *Node {
@@ -358,6 +487,7 @@ func Build(rows []Raw) *Node {
 						cur.DefaultVal = r.DefaultVal
 						cur.HasDefaultVal = true
 					}
+					copyConstraints(cur, &r)
 				} else {
 					// Intermediate nodes are implicit structs
 					if cur.TypeExpr == "" {
@@ -400,6 +530,7 @@ func Build(rows []Raw) *Node {
 				field.DefaultVal = r.DefaultVal
 				field.HasDefaultVal = true
 			}
+			copyConstraints(field, &r)
 
 			// Add implicit types
 			te := strings.TrimSpace(r.TypeExpr)
@@ -682,6 +813,35 @@ func (g *gen) emitField(c *Node) {
 		if baseType == "string" || baseType == "quantity" {
 			g.buf.WriteString("    // +kubebuilder:default:=\"\"\n")
 		}
+	}
+
+	// Emit validation constraints
+	if c.Minimum != nil {
+		g.buf.WriteString(fmt.Sprintf("    // +kubebuilder:validation:Minimum=%v\n", *c.Minimum))
+	}
+	if c.Maximum != nil {
+		g.buf.WriteString(fmt.Sprintf("    // +kubebuilder:validation:Maximum=%v\n", *c.Maximum))
+	}
+	if c.ExclusiveMinimum {
+		g.buf.WriteString("    // +kubebuilder:validation:ExclusiveMinimum=true\n")
+	}
+	if c.ExclusiveMaximum {
+		g.buf.WriteString("    // +kubebuilder:validation:ExclusiveMaximum=true\n")
+	}
+	if c.MinLength != nil {
+		g.buf.WriteString(fmt.Sprintf("    // +kubebuilder:validation:MinLength=%d\n", *c.MinLength))
+	}
+	if c.MaxLength != nil {
+		g.buf.WriteString(fmt.Sprintf("    // +kubebuilder:validation:MaxLength=%d\n", *c.MaxLength))
+	}
+	if c.Pattern != "" {
+		g.buf.WriteString(fmt.Sprintf("    // +kubebuilder:validation:Pattern=%q\n", c.Pattern))
+	}
+	if c.MinItems != nil {
+		g.buf.WriteString(fmt.Sprintf("    // +kubebuilder:validation:MinItems=%d\n", *c.MinItems))
+	}
+	if c.MaxItems != nil {
+		g.buf.WriteString(fmt.Sprintf("    // +kubebuilder:validation:MaxItems=%d\n", *c.MaxItems))
 	}
 
 	tag := "`json:\"" + c.Name

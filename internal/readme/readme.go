@@ -57,6 +57,15 @@ func isStringFormat(s string) bool {
 	return false
 }
 
+// Pre-compiled regex patterns (compiled once at package init)
+var (
+	sectionRe = regexp.MustCompile(patterns.SectionPattern)
+	paramRe   = regexp.MustCompile(patterns.ParamPattern)
+	fieldRe   = regexp.MustCompile(patterns.FieldPattern)
+	typedefRe = regexp.MustCompile(patterns.TypedefPattern)
+	enumRe    = regexp.MustCompile(patterns.EnumPattern)
+)
+
 type Config struct{}
 
 type Meta struct {
@@ -123,13 +132,6 @@ func parseMetadataComments(path string) (*Meta, error) {
 	var sections []*Section
 	var current *Section
 	var allParams []ParamMeta
-
-	// Use shared patterns from internal/patterns
-	sectionRe := regexp.MustCompile(patterns.SectionPattern)
-	paramRe := regexp.MustCompile(patterns.ParamPattern)
-	fieldRe := regexp.MustCompile(patterns.FieldPattern)
-	typedefRe := regexp.MustCompile(patterns.TypedefPattern)
-	enumRe := regexp.MustCompile(patterns.EnumPattern)
 
 	// ───────────── Parse all annotations in a single pass ─────────────
 	lines := strings.Split(string(data), "\n")

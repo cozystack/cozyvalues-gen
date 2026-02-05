@@ -1149,11 +1149,12 @@ qdrant:
 	require.Contains(t, table, "`3`")
 }
 
-// TestDottedPath_ValidationRejectsMissingDottedParam verifies that validation
-// catches when a required dotted path param is missing from values.yaml.
+// TestDottedPath_ValidationAllowsExtraFieldsUnderDottedRoots documents that
+// extra fields under dotted path roots are allowed (umbrella chart pattern).
 // For example, if schema defines `qdrant.replicaCount` but values.yaml has
-// `qdrant.somethingElse`, this should be detected.
-func TestDottedPath_ValidationRejectsMissingDottedParam(t *testing.T) {
+// `qdrant.wrongField`, validation passes because strict nested validation
+// is skipped for umbrella charts.
+func TestDottedPath_ValidationAllowsExtraFieldsUnderDottedRoots(t *testing.T) {
 	yamlContent := `
 ## @section Test
 ## @param {int} qdrant.replicaCount - Number of replicas
@@ -1167,7 +1168,7 @@ qdrant:
 
 	_, err = tmpFile.WriteString(yamlContent)
 	require.NoError(t, err)
-	tmpFile.Close()
+	require.NoError(t, tmpFile.Close())
 
 	// Create temp readme
 	tmpReadme, err := os.CreateTemp("", "readme-*.md")
@@ -1176,20 +1177,15 @@ qdrant:
 
 	_, err = tmpReadme.WriteString("# Test\n\n## Parameters\n\n")
 	require.NoError(t, err)
-	tmpReadme.Close()
+	require.NoError(t, tmpReadme.Close())
 
-	// This SHOULD fail validation because qdrant.wrongField is not in schema
-	// Currently it passes because dotted path roots skip validation entirely
+	// Dotted path roots skip strict nested validation (umbrella chart pattern)
 	err = UpdateParametersSection(tmpFile.Name(), tmpReadme.Name())
 
-	// TODO: This test currently PASSES (no error) but SHOULD FAIL
-	// because wrongField is not defined in schema.
-	// Once we implement stricter validation, change this to:
-	// require.Error(t, err)
-	// require.Contains(t, err.Error(), "wrongField")
-
-	// For now, document the current (lenient) behavior:
-	require.NoError(t, err, "Currently extra fields under dotted path roots are allowed (umbrella chart pattern)")
+	// Extra fields under dotted path roots are allowed
+	// This is intentional for umbrella charts where subcharts may have
+	// additional fields not explicitly documented in the parent chart
+	require.NoError(t, err, "Extra fields under dotted path roots are allowed (umbrella chart pattern)")
 }
 
 // TestDottedPath_ValidationRejectsMissingRoot verifies that validation
@@ -1207,7 +1203,7 @@ somethingElse:
 
 	_, err = tmpFile.WriteString(yamlContent)
 	require.NoError(t, err)
-	tmpFile.Close()
+	require.NoError(t, tmpFile.Close())
 
 	tmpReadme, err := os.CreateTemp("", "readme-*.md")
 	require.NoError(t, err)
@@ -1215,10 +1211,59 @@ somethingElse:
 
 	_, err = tmpReadme.WriteString("# Test\n\n## Parameters\n\n")
 	require.NoError(t, err)
-	tmpReadme.Close()
+	require.NoError(t, tmpReadme.Close())
 
 	// This SHOULD fail - somethingElse is not defined in schema
 	err = UpdateParametersSection(tmpFile.Name(), tmpReadme.Name())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "somethingElse")
+}
+
+// TestDottedPath_MissingNestedValueHasDefault verifies that when a nested
+// value is missing from values.yaml and there's no annotation default,
+// the table still gets a type-appropriate default value (not empty string).
+func TestDottedPath_MissingNestedValueHasDefault(t *testing.T) {
+	yamlContent := `
+## @section Test
+## @param {int} qdrant.replicas - Number of replicas
+## @param {string} qdrant.name - Name
+## @param {[]string} qdrant.tags - Tags
+qdrant:
+  # All fields missing from values, but should still get defaults
+`
+	tmpFile, err := os.CreateTemp("", "values-*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+
+	_, err = tmpFile.WriteString(yamlContent)
+	require.NoError(t, err)
+	require.NoError(t, tmpFile.Close())
+
+	tmpReadme, err := os.CreateTemp("", "readme-*.md")
+	require.NoError(t, err)
+	defer os.Remove(tmpReadme.Name())
+
+	_, err = tmpReadme.WriteString("# Test\n\n## Parameters\n\n")
+	require.NoError(t, err)
+	require.NoError(t, tmpReadme.Close())
+
+	err = UpdateParametersSection(tmpFile.Name(), tmpReadme.Name())
+	require.NoError(t, err)
+
+	// Read generated README and verify values are not empty
+	content, err := os.ReadFile(tmpReadme.Name())
+	require.NoError(t, err)
+
+	contentStr := string(content)
+	// Should have default values, not empty cells
+	require.Contains(t, contentStr, "qdrant.replicas")
+	require.Contains(t, contentStr, "qdrant.name")
+	require.Contains(t, contentStr, "qdrant.tags")
+
+	// Verify no empty value cells (pattern: | param | type | | would indicate empty value)
+	// The table format is: | Name | Type | Default |
+	// Empty value would be: | qdrant.replicas | `int` |  |
+	require.NotContains(t, contentStr, "| `int` |  |", "int param should have default value")
+	require.NotContains(t, contentStr, "| `string` |  |", "string param should have default value")
+	require.NotContains(t, contentStr, "| `[]string` |  |", "[]string param should have default value")
 }

@@ -1539,22 +1539,16 @@ qdrant:
 	require.True(t, root.Child["qdrant"].Child["replicas"].IsParam)
 }
 
-// TestParseDottedPath_InvalidPaths verifies that malformed paths are handled gracefully.
+// TestParseDottedPath_InvalidPaths verifies that malformed paths are rejected by regex.
 func TestParseDottedPath_InvalidPaths(t *testing.T) {
-	// Path with leading dot - regex should not match this
+	// Path with leading dot - regex should not match
 	const yaml1 = `
 ## @param {string} .invalid - Leading dot
 value: test
 `
 	rows, err := Parse(writeTempFile(yaml1))
 	require.NoError(t, err)
-	// Should not parse as param (invalid format)
-	for _, r := range rows {
-		if r.K == 1 { // kParam
-			require.NotEqual(t, ".invalid", strings.Join(r.Path, "."),
-				"leading dot path should not be parsed")
-		}
-	}
+	require.Empty(t, rows, "leading dot path should not be parsed")
 
 	// Path with trailing dot
 	const yaml2 = `
@@ -1563,12 +1557,7 @@ value: test
 `
 	rows2, err := Parse(writeTempFile(yaml2))
 	require.NoError(t, err)
-	for _, r := range rows2 {
-		if r.K == 1 { // kParam
-			require.NotEqual(t, "invalid.", strings.Join(r.Path, "."),
-				"trailing dot path should not be parsed")
-		}
-	}
+	require.Empty(t, rows2, "trailing dot path should not be parsed")
 
 	// Path with consecutive dots
 	const yaml3 = `
@@ -1577,12 +1566,521 @@ value: test
 `
 	rows3, err := Parse(writeTempFile(yaml3))
 	require.NoError(t, err)
-	for _, r := range rows3 {
-		if r.K == 1 { // kParam
-			// If parsed, should not have empty segments
-			for _, seg := range r.Path {
-				require.NotEmpty(t, seg, "path segments should not be empty")
+	require.Empty(t, rows3, "consecutive dots path should not be parsed")
+}
+
+// =============================================================================
+// Validation Constraints Tests
+// =============================================================================
+
+// TestParseMinimumMaximum tests parsing @minimum and @maximum constraints.
+func TestParseMinimumMaximum(t *testing.T) {
+	const yaml = `
+## @param {int} replicas - Number of replicas
+## @minimum 1
+## @maximum 100
+replicas: 3
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	r := rows[0]
+	require.Equal(t, kParam, r.K)
+	require.Equal(t, []string{"replicas"}, r.Path)
+
+	// Validate constraints
+	require.NotNil(t, r.Minimum, "Minimum should be set")
+	require.NotNil(t, r.Maximum, "Maximum should be set")
+	require.Equal(t, 1.0, *r.Minimum)
+	require.Equal(t, 100.0, *r.Maximum)
+}
+
+// TestParseMinimumMaximum_Float tests @minimum/@maximum with float values.
+func TestParseMinimumMaximum_Float(t *testing.T) {
+	const yaml = `
+## @param {number} ratio - Ratio value
+## @minimum -0.5
+## @maximum 1.5
+ratio: 0.5
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	r := rows[0]
+	require.NotNil(t, r.Minimum)
+	require.NotNil(t, r.Maximum)
+	require.Equal(t, -0.5, *r.Minimum)
+	require.Equal(t, 1.5, *r.Maximum)
+}
+
+// TestParseExclusiveMinMax tests @exclusiveMinimum/@exclusiveMaximum flags.
+func TestParseExclusiveMinMax(t *testing.T) {
+	const yaml = `
+## @param {int} port - Port number
+## @minimum 0
+## @exclusiveMinimum
+## @maximum 65536
+## @exclusiveMaximum
+port: 8080
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	r := rows[0]
+	require.NotNil(t, r.Minimum)
+	require.NotNil(t, r.Maximum)
+	require.Equal(t, 0.0, *r.Minimum)
+	require.Equal(t, 65536.0, *r.Maximum)
+	require.True(t, r.ExclusiveMinimum)
+	require.True(t, r.ExclusiveMaximum)
+}
+
+// TestParseMinMaxLength tests @minLength/@maxLength for strings.
+func TestParseMinMaxLength(t *testing.T) {
+	const yaml = `
+## @param {string} name - Release name
+## @minLength 1
+## @maxLength 63
+name: "myapp"
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	r := rows[0]
+	require.NotNil(t, r.MinLength, "MinLength should be set")
+	require.NotNil(t, r.MaxLength, "MaxLength should be set")
+	require.Equal(t, int64(1), *r.MinLength)
+	require.Equal(t, int64(63), *r.MaxLength)
+}
+
+// TestParsePattern tests @pattern for regex validation.
+func TestParsePattern(t *testing.T) {
+	const yaml = `
+## @param {string} name - DNS-compatible name
+## @pattern ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+name: "myapp"
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	r := rows[0]
+	require.Equal(t, `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, r.Pattern)
+}
+
+// TestParseMinMaxItems tests @minItems/@maxItems for arrays.
+func TestParseMinMaxItems(t *testing.T) {
+	const yaml = `
+## @param {[]string} tags - List of tags
+## @minItems 1
+## @maxItems 10
+tags: []
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	r := rows[0]
+	require.NotNil(t, r.MinItems, "MinItems should be set")
+	require.NotNil(t, r.MaxItems, "MaxItems should be set")
+	require.Equal(t, int64(1), *r.MinItems)
+	require.Equal(t, int64(10), *r.MaxItems)
+}
+
+// TestParseConstraints_MultipleParams tests that constraints apply only to immediate param.
+func TestParseConstraints_MultipleParams(t *testing.T) {
+	const yaml = `
+## @param {int} replicas - Number of replicas
+## @minimum 1
+replicas: 3
+
+## @param {int} workers - Number of workers
+## @minimum 0
+## @maximum 16
+workers: 4
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+
+	// First param: replicas
+	r1 := rows[0]
+	require.Equal(t, []string{"replicas"}, r1.Path)
+	require.NotNil(t, r1.Minimum)
+	require.Equal(t, 1.0, *r1.Minimum)
+	require.Nil(t, r1.Maximum, "replicas should not have maximum")
+
+	// Second param: workers
+	r2 := rows[1]
+	require.Equal(t, []string{"workers"}, r2.Path)
+	require.NotNil(t, r2.Minimum)
+	require.NotNil(t, r2.Maximum)
+	require.Equal(t, 0.0, *r2.Minimum)
+	require.Equal(t, 16.0, *r2.Maximum)
+}
+
+// TestParseConstraints_SectionDoesNotResetConstraints verifies that @section
+// (which is a README concept, not OpenAPI) doesn't interrupt constraint accumulation.
+func TestParseConstraints_SectionDoesNotResetConstraints(t *testing.T) {
+	const yaml = `
+## @param {int} port - Port number
+## @minimum 1
+## @section Database Settings
+## @maximum 65535
+port: 5432
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	// @section is ignored in openapi parsing, constraints apply to port
+	r := rows[0]
+	require.Equal(t, []string{"port"}, r.Path)
+	require.NotNil(t, r.Minimum, "minimum should be set")
+	require.NotNil(t, r.Maximum, "maximum should be set despite @section in between")
+	require.Equal(t, 1.0, *r.Minimum)
+	require.Equal(t, 65535.0, *r.Maximum)
+}
+
+// TestBuildWithConstraints tests that Build() transfers constraints from Raw to Node.
+func TestBuildWithConstraints(t *testing.T) {
+	min := 1.0
+	max := 100.0
+	minLen := int64(1)
+	maxLen := int64(63)
+	minItems := int64(1)
+	maxItems := int64(10)
+	pattern := `^[a-z]+$`
+
+	rows := []Raw{
+		{
+			K:                kParam,
+			Path:             []string{"replicas"},
+			TypeExpr:         "int",
+			Minimum:          &min,
+			Maximum:          &max,
+			ExclusiveMinimum: true,
+		},
+		{
+			K:         kParam,
+			Path:      []string{"name"},
+			TypeExpr:  "string",
+			MinLength: &minLen,
+			MaxLength: &maxLen,
+			Pattern:   pattern,
+		},
+		{
+			K:        kParam,
+			Path:     []string{"tags"},
+			TypeExpr: "[]string",
+			MinItems: &minItems,
+			MaxItems: &maxItems,
+		},
+	}
+
+	root := Build(rows)
+
+	// Test replicas constraints
+	replicas := root.Child["replicas"]
+	require.NotNil(t, replicas)
+	require.NotNil(t, replicas.Minimum)
+	require.NotNil(t, replicas.Maximum)
+	require.Equal(t, 1.0, *replicas.Minimum)
+	require.Equal(t, 100.0, *replicas.Maximum)
+	require.True(t, replicas.ExclusiveMinimum)
+
+	// Test name constraints
+	name := root.Child["name"]
+	require.NotNil(t, name)
+	require.NotNil(t, name.MinLength)
+	require.NotNil(t, name.MaxLength)
+	require.Equal(t, int64(1), *name.MinLength)
+	require.Equal(t, int64(63), *name.MaxLength)
+	require.Equal(t, pattern, name.Pattern)
+
+	// Test tags constraints
+	tags := root.Child["tags"]
+	require.NotNil(t, tags)
+	require.NotNil(t, tags.MinItems)
+	require.NotNil(t, tags.MaxItems)
+	require.Equal(t, int64(1), *tags.MinItems)
+	require.Equal(t, int64(10), *tags.MaxItems)
+}
+
+// TestGenerateKubebuilderValidationMarkers tests kubebuilder markers generation.
+func TestGenerateKubebuilderValidationMarkers(t *testing.T) {
+	min := 1.0
+	max := 100.0
+	minLen := int64(1)
+	maxLen := int64(63)
+	minItems := int64(1)
+	maxItems := int64(10)
+	pattern := `^[a-z0-9-]+$`
+
+	rows := []Raw{
+		{
+			K:                kParam,
+			Path:             []string{"replicas"},
+			TypeExpr:         "int",
+			Minimum:          &min,
+			Maximum:          &max,
+			ExclusiveMinimum: true,
+			ExclusiveMaximum: true,
+		},
+		{
+			K:         kParam,
+			Path:      []string{"name"},
+			TypeExpr:  "string",
+			MinLength: &minLen,
+			MaxLength: &maxLen,
+			Pattern:   pattern,
+		},
+		{
+			K:        kParam,
+			Path:     []string{"tags"},
+			TypeExpr: "[]string",
+			MinItems: &minItems,
+			MaxItems: &maxItems,
+		},
+	}
+
+	root := Build(rows)
+	g := &gen{pkg: "values"}
+	code, _, err := g.Generate(root)
+	require.NoError(t, err)
+
+	src := string(code)
+
+	// Test numeric constraints for replicas
+	require.Contains(t, src, "+kubebuilder:validation:Minimum=1", "should have Minimum marker")
+	require.Contains(t, src, "+kubebuilder:validation:Maximum=100", "should have Maximum marker")
+	require.Contains(t, src, "+kubebuilder:validation:ExclusiveMinimum=true", "should have ExclusiveMinimum marker")
+	require.Contains(t, src, "+kubebuilder:validation:ExclusiveMaximum=true", "should have ExclusiveMaximum marker")
+
+	// Test string constraints for name
+	require.Contains(t, src, "+kubebuilder:validation:MinLength=1", "should have MinLength marker")
+	require.Contains(t, src, "+kubebuilder:validation:MaxLength=63", "should have MaxLength marker")
+	require.Contains(t, src, "+kubebuilder:validation:Pattern=", "should have Pattern marker")
+
+	// Test array constraints for tags
+	require.Contains(t, src, "+kubebuilder:validation:MinItems=1", "should have MinItems marker")
+	require.Contains(t, src, "+kubebuilder:validation:MaxItems=10", "should have MaxItems marker")
+}
+
+// TestEndToEndValidationConstraintsInSchema tests full pipeline: YAML → JSON Schema.
+func TestEndToEndValidationConstraintsInSchema(t *testing.T) {
+	const yaml = `
+## @param {int} replicas - Number of replicas
+## @minimum 1
+## @maximum 10
+replicas: 3
+
+## @param {string} name - DNS-compatible name
+## @minLength 1
+## @maxLength 63
+## @pattern ^[a-z0-9-]+$
+name: "myapp"
+
+## @param {[]string} tags - List of tags
+## @minItems 1
+## @maxItems 5
+tags:
+  - default
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	// Parse → Build → Generate
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+
+	root := Build(rows)
+	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	// Use controller-gen to generate CRD
+	crdBytes, err := CG(filepath.Dir(goFile))
+	require.NoError(t, err)
+
+	// Write schema and read it back as JSON for easy inspection
+	schemaPath := filepath.Join(tmpDir, "values.schema.json")
+	require.NoError(t, WriteValuesSchema(crdBytes, schemaPath))
+	schemaBytes, err := os.ReadFile(schemaPath)
+	require.NoError(t, err)
+
+	// Parse schema JSON
+	var schema map[string]any
+	err = json.Unmarshal(schemaBytes, &schema)
+	require.NoError(t, err)
+
+	specPropsProps := schema["properties"].(map[string]any)
+
+	// Check replicas constraints
+	replicas := specPropsProps["replicas"].(map[string]any)
+	require.Equal(t, float64(1), replicas["minimum"], "replicas should have minimum=1")
+	require.Equal(t, float64(10), replicas["maximum"], "replicas should have maximum=10")
+
+	// Check name constraints
+	name := specPropsProps["name"].(map[string]any)
+	require.Equal(t, float64(1), name["minLength"], "name should have minLength=1")
+	require.Equal(t, float64(63), name["maxLength"], "name should have maxLength=63")
+	require.Equal(t, "^[a-z0-9-]+$", name["pattern"], "name should have pattern")
+
+	// Check tags constraints
+	tags := specPropsProps["tags"].(map[string]any)
+	require.Equal(t, float64(1), tags["minItems"], "tags should have minItems=1")
+	require.Equal(t, float64(5), tags["maxItems"], "tags should have maxItems=5")
+}
+
+// TestFieldPatternStillWorks verifies @field annotations work after patterns refactor.
+func TestFieldPatternStillWorks(t *testing.T) {
+	const yaml = `
+## @typedef {struct} Database - Database config
+## @field {string} host - Database host
+## @field {int} port - Database port
+## @param {Database} database - Database settings
+database:
+  host: localhost
+  port: 5432
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+
+	// Should have: typedef Database, 2 fields, 1 param
+	var typedefCount, fieldCount, paramCount int
+	for _, r := range rows {
+		switch r.K {
+		case kTypedef:
+			typedefCount++
+			require.Equal(t, []string{"Database"}, r.Path)
+		case kField:
+			fieldCount++
+		case kParam:
+			paramCount++
+			require.Equal(t, []string{"database"}, r.Path)
+		}
+	}
+	require.Equal(t, 1, typedefCount, "should have 1 typedef")
+	require.Equal(t, 2, fieldCount, "should have 2 fields")
+	require.Equal(t, 1, paramCount, "should have 1 param")
+}
+
+// TestFieldConstraints verifies @field annotations can have validation constraints.
+func TestFieldConstraints(t *testing.T) {
+	const yaml = `
+## @typedef {struct} Database - Database config
+## @field {string} host - Database host
+## @minLength 1
+## @maxLength 253
+## @pattern ^[a-z0-9.-]+$
+## @field {int} port - Database port
+## @minimum 1
+## @maximum 65535
+## @param {Database} database - Database settings
+database:
+  host: localhost
+  port: 5432
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+
+	// Find the host and port fields
+	var hostField, portField *Raw
+	for i := range rows {
+		if rows[i].K == kField {
+			if rows[i].Path[1] == "host" {
+				hostField = &rows[i]
+			} else if rows[i].Path[1] == "port" {
+				portField = &rows[i]
 			}
 		}
 	}
+
+	require.NotNil(t, hostField, "should have host field")
+	require.NotNil(t, portField, "should have port field")
+
+	// Verify host field constraints
+	require.NotNil(t, hostField.MinLength)
+	require.Equal(t, int64(1), *hostField.MinLength)
+	require.NotNil(t, hostField.MaxLength)
+	require.Equal(t, int64(253), *hostField.MaxLength)
+	require.Equal(t, "^[a-z0-9.-]+$", hostField.Pattern)
+
+	// Verify port field constraints
+	require.NotNil(t, portField.Minimum)
+	require.Equal(t, 1.0, *portField.Minimum)
+	require.NotNil(t, portField.Maximum)
+	require.Equal(t, 65535.0, *portField.Maximum)
+}
+
+// TestFieldConstraintsInBuild verifies constraints propagate through Build().
+func TestFieldConstraintsInBuild(t *testing.T) {
+	minLen := int64(1)
+	maxLen := int64(253)
+	min := 1.0
+	max := 65535.0
+	rows := []Raw{
+		{K: kTypedef, Path: []string{"Database"}, TypeExpr: "struct"},
+		{K: kField, Path: []string{"Database", "host"}, TypeExpr: "string", MinLength: &minLen, MaxLength: &maxLen, Pattern: "^[a-z]+$"},
+		{K: kField, Path: []string{"Database", "port"}, TypeExpr: "int", Minimum: &min, Maximum: &max},
+		{K: kParam, Path: []string{"database"}, TypeExpr: "Database"},
+	}
+
+	root := Build(rows)
+
+	// Find Database type
+	dbType := root.Child["Database"]
+	require.NotNil(t, dbType)
+
+	// Verify host field constraints in Node
+	hostNode := dbType.Child["host"]
+	require.NotNil(t, hostNode)
+	require.NotNil(t, hostNode.MinLength)
+	require.Equal(t, int64(1), *hostNode.MinLength)
+	require.NotNil(t, hostNode.MaxLength)
+	require.Equal(t, int64(253), *hostNode.MaxLength)
+	require.Equal(t, "^[a-z]+$", hostNode.Pattern)
+
+	// Verify port field constraints in Node
+	portNode := dbType.Child["port"]
+	require.NotNil(t, portNode)
+	require.NotNil(t, portNode.Minimum)
+	require.Equal(t, 1.0, *portNode.Minimum)
+	require.NotNil(t, portNode.Maximum)
+	require.Equal(t, 65535.0, *portNode.Maximum)
 }
