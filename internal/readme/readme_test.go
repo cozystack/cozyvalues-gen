@@ -965,3 +965,4 @@ presets:
 	require.Contains(t, table, "`[small, large]`", "array-of-enums should show actual values")
 	require.NotContains(t, table, "`[]object`", "array-of-enums should not be []object")
 }
+

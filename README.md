@@ -42,11 +42,18 @@ See `cozyvalues-gen` -h for all flags.
 
 ## Installation
 
-### Requirements
-- **Go toolchain** must be installed and accessible via `$PATH`.
+### Homebrew (macOS and Linux)
 
+```bash
+brew tap cozystack/tap
+brew install cozyvalues-gen
+```
+
+> **Note**: This uses our [incubating tap](https://github.com/cozystack/homebrew-tap). The formula will be submitted to official homebrew/core once it reaches 75+ stars and stable adoption.
 
 ### Using `go install`
+
+Requires Go toolchain installed and accessible via `$PATH`.
 
 ```console
 go install github.com/cozystack/cozyvalues-gen@latest
