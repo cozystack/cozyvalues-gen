@@ -747,7 +747,7 @@ func (g *gen) writeStruct(n *Node) {
 		return
 	}
 
-	if len(n.Child) == 0 && strings.TrimSpace(n.TypeExpr) != "" {
+	if len(n.Child) == 0 && strings.TrimSpace(n.TypeExpr) != "" && strings.TrimSpace(n.TypeExpr) != "struct" {
 		return
 	}
 
