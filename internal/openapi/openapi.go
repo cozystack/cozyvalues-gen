@@ -741,8 +741,8 @@ func (g *gen) writeStruct(n *Node) {
 		}
 		g.buf.WriteString("}\n\n")
 
-		for _, c := range n.Child {
-			g.writeStruct(c)
+		for _, k := range sortedKeys(n.Child) {
+			g.writeStruct(n.Child[k])
 		}
 		return
 	}
@@ -763,8 +763,8 @@ func (g *gen) writeStruct(n *Node) {
 	}
 	g.buf.WriteString("}\n\n")
 
-	for _, c := range n.Child {
-		g.writeStruct(c)
+	for _, k := range sortedKeys(n.Child) {
+		g.writeStruct(n.Child[k])
 	}
 }
 
@@ -876,7 +876,8 @@ func (g *gen) Generate(root *Node) ([]byte, []byte, error) {
 	g.writeStruct(root)
 
 	// Generate enum types
-	for _, c := range root.Child {
+	for _, k := range sortedKeys(root.Child) {
+		c := root.Child[k]
 		if len(c.Enums) > 0 {
 			g.writeEnum(c)
 		}
