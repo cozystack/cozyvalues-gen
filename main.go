@@ -19,18 +19,22 @@ import (
 var Version = "dev"
 
 var (
-	inValues  string
-	module    string
-	outGo     string
-	outCRD    string
-	outSchema string
-	outReadme string
+	inValues    string
+	module      string
+	groupName   string
+	versionName string
+	outGo       string
+	outCRD      string
+	outSchema   string
+	outReadme   string
 )
 
 func init() {
 	pflag.BoolP("version", "V", false, "print version and exit")
 	pflag.StringVarP(&inValues, "values", "v", "values.yaml", "annotated Helm values.yaml")
 	pflag.StringVarP(&module, "module", "m", "values", "package name")
+	pflag.StringVar(&groupName, "group-name", "apps.cozystack.io", "API group name for +groupName marker")
+	pflag.StringVar(&versionName, "version-name", "v1alpha1", "API version for +versionName marker")
 	pflag.StringVarP(&outGo, "debug-go", "g", "", "output *.go file")
 	pflag.StringVarP(&outCRD, "debug-crd", "c", "", "output CRD YAML")
 	pflag.StringVarP(&outSchema, "schema", "s", "", "output values.schema.json")
@@ -71,7 +75,7 @@ func main() {
 	// Generate Go files only if required
 	if outGo != "" || outCRD != "" || outSchema != "" {
 		var genErr error
-		tmpdir, goFilePath, genErr = openapi.WriteGeneratedGoAndStub(tree, module)
+		tmpdir, goFilePath, genErr = openapi.WriteGeneratedGoAndStub(tree, module, groupName, versionName)
 		if genErr != nil {
 			fmt.Printf("write generated: %v\n", genErr)
 		}

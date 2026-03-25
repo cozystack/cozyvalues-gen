@@ -27,7 +27,7 @@ func TestExamplesGeneration(t *testing.T) {
 			root := Build(rows)
 			require.NotNil(t, root, "failed to build tree for %s", file.Name())
 
-			tmpdir, goFile, err := WriteGeneratedGoAndStub(root, "values")
+			tmpdir, goFile, err := WriteGeneratedGoAndStub(root, "values", "values.helm.io", "v1alpha1")
 			require.NoError(t, err, "failed to generate Go code for %s", file.Name())
 			defer os.RemoveAll(tmpdir)
 

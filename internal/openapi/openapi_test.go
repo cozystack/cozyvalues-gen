@@ -57,7 +57,7 @@ func TestEndToEndSchemaGeneration(t *testing.T) {
 		aliases[n.Name] = n
 	}
 	PopulateDefaults(root, parsed, aliases)
-	tmp, goFile, err := WriteGeneratedGoAndStub(root, "values")
+	tmp, goFile, err := WriteGeneratedGoAndStub(root, "values", "values.helm.io", "v1alpha1")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmp)
 	crdBytes, err := CG(filepath.Dir(goFile))
@@ -149,7 +149,7 @@ metricsStorages:
 	rows, err := Parse(tmpfile)
 	require.NoError(t, err)
 	root := Build(rows)
-	tmpdir, gofile, err := WriteGeneratedGoAndStub(root, "values")
+	tmpdir, gofile, err := WriteGeneratedGoAndStub(root, "values", "values.helm.io", "v1alpha1")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpdir)
 	crdBytes, err := CG(filepath.Dir(gofile))
@@ -194,7 +194,7 @@ foo:
 	rows, err := Parse(tmpfile)
 	require.NoError(t, err)
 	root := Build(rows)
-	tmpdir, gofile, err := WriteGeneratedGoAndStub(root, "values")
+	tmpdir, gofile, err := WriteGeneratedGoAndStub(root, "values", "values.helm.io", "v1alpha1")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpdir)
 	crdBytes, err := CG(filepath.Dir(gofile))
@@ -356,7 +356,7 @@ apiURL: ""
 	root := Build(rows)
 
 	// generate stub project & CRD → schema
-	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values")
+	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values", "values.helm.io", "v1alpha1")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
@@ -496,7 +496,7 @@ cfg: {}
 
 	// ----- build CRD & JSON-schema ----------------------------------
 
-	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values")
+	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values", "values.helm.io", "v1alpha1")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
@@ -591,7 +591,7 @@ config:
 	require.NoError(t, err)
 	root := Build(rows)
 
-	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values")
+	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values", "values.helm.io", "v1alpha1")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
@@ -654,7 +654,7 @@ labels:
 	require.NoError(t, err)
 	root := Build(rows)
 
-	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values")
+	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values", "values.helm.io", "v1alpha1")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
@@ -710,7 +710,7 @@ labels:
 	require.Contains(t, code, "`json:\"config\"`", "ConfigSpec.Config should have json tag \"config\"")
 
 	// Build CRD → JSON schema
-	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values")
+	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values", "values.helm.io", "v1alpha1")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
@@ -816,7 +816,7 @@ nodeGroups: {}
 	require.NoError(t, err)
 	root := Build(rows)
 
-	tmpdir, gofile, err := WriteGeneratedGoAndStub(root, "values")
+	tmpdir, gofile, err := WriteGeneratedGoAndStub(root, "values", "values.helm.io", "v1alpha1")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpdir)
 
@@ -855,7 +855,7 @@ backup: {}
 	require.NoError(t, err)
 	root := Build(rows)
 
-	tmpdir, gofile, err := WriteGeneratedGoAndStub(root, "values")
+	tmpdir, gofile, err := WriteGeneratedGoAndStub(root, "values", "values.helm.io", "v1alpha1")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpdir)
 
@@ -897,7 +897,7 @@ controlPlane:
 	require.NoError(t, err)
 
 	root := Build(rows)
-	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values")
+	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values", "values.helm.io", "v1alpha1")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
@@ -1286,7 +1286,7 @@ tags:
 	require.NoError(t, err)
 
 	root := Build(rows)
-	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values")
+	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values", "values.helm.io", "v1alpha1")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
