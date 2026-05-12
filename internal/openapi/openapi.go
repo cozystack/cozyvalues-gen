@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"go/format"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -26,6 +27,16 @@ import (
 /* -------------------------------------------------------------------------- */
 /*  Annotation parsing                                                         */
 /* -------------------------------------------------------------------------- */
+
+// WarnWriter receives diagnostic warnings emitted by Parse. It defaults to
+// os.Stderr; tests can swap it out to capture output. The parser is not
+// concurrency-safe to begin with (it's a CLI helper, single-pass per file),
+// so a package-level writer is fine.
+var WarnWriter io.Writer = os.Stderr
+
+func emitWarn(file string, lineNum int, msg string) {
+	fmt.Fprintf(WarnWriter, "cozyvalues-gen: %s:%d: warning: %s\n", filepath.Base(file), lineNum, msg)
+}
 
 type kind int
 
@@ -67,6 +78,15 @@ type Raw struct {
 	Pattern          string
 	MinItems         *int64
 	MaxItems         *int64
+
+	// Immutable, when true, emits a CEL XValidation rule (self == oldSelf)
+	// at the property level. CAVEAT: per K8s x-kubernetes-validations
+	// semantics the rule only fires when the property is present in both
+	// oldSelf and self, so on optional/omitempty/pointer fields it
+	// enforces "immutable once set" rather than "immutable from creation".
+	// Make the field required (no `[name]` brackets, no pointer) for full
+	// "immutable from creation" semantics.
+	Immutable bool
 }
 
 // JSDoc-like syntax patterns (using shared patterns from internal/patterns)
@@ -87,7 +107,28 @@ var (
 	rePattern          = regexp.MustCompile(patterns.RegexPatternPattern)
 	reMinItems         = regexp.MustCompile(patterns.MinItemsPattern)
 	reMaxItems         = regexp.MustCompile(patterns.MaxItemsPattern)
+	reImmutable        = regexp.MustCompile(patterns.ImmutablePattern)
+
+	allConstraintREs = []*regexp.Regexp{
+		reMinimum, reMaximum, reExclusiveMinimum, reExclusiveMaximum,
+		reMinLength, reMaxLength, rePattern, reMinItems, reMaxItems,
+		reImmutable,
+	}
 )
+
+// matchesAnyConstraint reports whether the line is recognised by any
+// constraint annotation regex. Used by Parse to decide whether to emit a
+// "constraint placed after YAML value" warning before the actual matcher
+// blocks consume the line. Keeping this in one place avoids drift when a
+// new constraint regex is added.
+func matchesAnyConstraint(line string) bool {
+	for _, re := range allConstraintREs {
+		if re.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
 
 // additional string-format aliases
 // see https://github.com/go-openapi/strfmt/blob/master/README.md
@@ -136,17 +177,37 @@ func Parse(file string) ([]Raw, error) {
 	var currentEnum *Raw
 	var enumValues []string
 	var lastAnnotated *Raw // Track last @param or @field to accumulate constraints
+	// lastAnnotatedYAMLPassed becomes true the first time a non-comment YAML
+	// line is seen while lastAnnotated is still active. Subsequent constraint
+	// matches still attach to lastAnnotated (preserving pre-existing
+	// behaviour for every constraint family), but emit a warning so the
+	// misplacement is observable instead of silent.
+	var lastAnnotatedYAMLPassed bool
 
 	// finalizeLastAnnotated appends the last annotated item to output if it exists
 	finalizeLastAnnotated := func() {
 		if lastAnnotated != nil {
 			out = append(out, *lastAnnotated)
 			lastAnnotated = nil
+			lastAnnotatedYAMLPassed = false
 		}
 	}
 
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
+	for i, raw := range lines {
+		lineNum := i + 1
+		line := strings.TrimSpace(raw)
+
+		// A non-empty YAML-content line marks the boundary between the
+		// preceding @param's accumulation window and any trailing text.
+		// We don't drop lastAnnotated here (that would silently change
+		// behaviour for late @minimum/@maximum/etc. across the codebase);
+		// we only flag that subsequent constraint matches are now after
+		// the YAML value, so the warning path below can light up.
+		if line != "" && !strings.HasPrefix(line, "#") {
+			if lastAnnotated != nil {
+				lastAnnotatedYAMLPassed = true
+			}
+		}
 
 		// Check for enum value
 		if m := reEnumValue.FindStringSubmatch(line); m != nil && currentEnum != nil {
@@ -176,6 +237,17 @@ func Parse(file string) ([]Raw, error) {
 		// This is intentional — @section is a README concept, not OpenAPI.
 		if lastAnnotated != nil {
 			paramName := strings.Join(lastAnnotated.Path, ".")
+			// If we've already crossed the YAML value line of lastAnnotated,
+			// the attachment still goes through (preserving pre-existing
+			// behaviour for every constraint family) but emit one warning so
+			// the misplacement is observable to the chart author.
+			if lastAnnotatedYAMLPassed && matchesAnyConstraint(line) {
+				emitWarn(file, lineNum, fmt.Sprintf(
+					"constraint on this line still attaches to %q across an intervening YAML value line; move it to immediately after the @param/@field header for clarity",
+					paramName,
+				))
+				lastAnnotatedYAMLPassed = false // only warn once per misplacement run
+			}
 			if m := reMinimum.FindStringSubmatch(line); m != nil {
 				val, err := strconv.ParseFloat(m[1], 64)
 				if err != nil {
@@ -234,6 +306,10 @@ func Parse(file string) ([]Raw, error) {
 					return nil, fmt.Errorf("invalid @maxItems value %q for %q: %w", m[1], paramName, err)
 				}
 				lastAnnotated.MaxItems = &val
+				continue
+			}
+			if reImmutable.MatchString(line) {
+				lastAnnotated.Immutable = true
 				continue
 			}
 		}
@@ -413,6 +489,15 @@ type Node struct {
 	Pattern          string
 	MinItems         *int64
 	MaxItems         *int64
+
+	// Immutable, when true, emits a CEL XValidation rule (self == oldSelf)
+	// at the property level. CAVEAT: per K8s x-kubernetes-validations
+	// semantics the rule only fires when the property is present in both
+	// oldSelf and self, so on optional/omitempty/pointer fields it
+	// enforces "immutable once set" rather than "immutable from creation".
+	// Make the field required (no `[name]` brackets, no pointer) for full
+	// "immutable from creation" semantics.
+	Immutable bool
 }
 
 func newNode(name string, p *Node) *Node {
@@ -439,6 +524,7 @@ func copyConstraints(node *Node, raw *Raw) {
 	node.Pattern = raw.Pattern
 	node.MinItems = raw.MinItems
 	node.MaxItems = raw.MaxItems
+	node.Immutable = raw.Immutable
 }
 
 func Build(rows []Raw) *Node {
@@ -841,6 +927,16 @@ func (g *gen) emitField(c *Node) {
 	}
 	if c.MaxItems != nil {
 		g.buf.WriteString(fmt.Sprintf("    // +kubebuilder:validation:MaxItems=%d\n", *c.MaxItems))
+	}
+	if c.Immutable {
+		// "is immutable" without the "after creation" qualifier: for
+		// optional/omitempty/pointer fields the rule actually enforces
+		// "immutable once set", so the legacy phrasing was misleading for
+		// the operator who sees the admission error.
+		g.buf.WriteString(fmt.Sprintf(
+			"    // +kubebuilder:validation:XValidation:rule=\"self == oldSelf\",message=%q\n",
+			c.Name+" is immutable",
+		))
 	}
 
 	tag := "`json:\"" + c.Name

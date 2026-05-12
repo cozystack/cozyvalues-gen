@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"go/ast"
 	"go/parser"
@@ -1264,6 +1265,36 @@ func TestBuildWithConstraints(t *testing.T) {
 	require.Equal(t, int64(10), *tags.MaxItems)
 }
 
+// TestParseImmutable tests parsing of the @immutable flag.
+func TestParseImmutable(t *testing.T) {
+	const yaml = `
+## @param {string} storageClass - StorageClass used to store the data.
+## @immutable
+storageClass: ""
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.True(t, rows[0].Immutable, "Immutable should be set when @immutable is present")
+}
+
+func TestParseImmutable_AbsentByDefault(t *testing.T) {
+	const yaml = `
+## @param {string} storageClass - StorageClass used to store the data.
+storageClass: ""
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.False(t, rows[0].Immutable)
+}
+
 // TestGenerateKubebuilderValidationMarkers tests kubebuilder markers generation.
 func TestGenerateKubebuilderValidationMarkers(t *testing.T) {
 	min := 1.0
@@ -1322,6 +1353,175 @@ func TestGenerateKubebuilderValidationMarkers(t *testing.T) {
 	// Test array constraints for tags
 	require.Contains(t, src, "+kubebuilder:validation:MinItems=1", "should have MinItems marker")
 	require.Contains(t, src, "+kubebuilder:validation:MaxItems=10", "should have MaxItems marker")
+}
+
+// TestGenerateImmutableMarker tests the kubebuilder XValidation marker for @immutable.
+func TestGenerateImmutableMarker(t *testing.T) {
+	rows := []Raw{
+		{
+			K:         kParam,
+			Path:      []string{"storageClass"},
+			TypeExpr:  "string",
+			Immutable: true,
+		},
+	}
+
+	root := Build(rows)
+	g := &gen{pkg: "values"}
+	code, _, err := g.Generate(root)
+	require.NoError(t, err)
+
+	src := string(code)
+	require.Contains(t, src,
+		`+kubebuilder:validation:XValidation:rule="self == oldSelf",message="storageClass is immutable"`,
+		"should emit XValidation CEL marker for @immutable field",
+	)
+}
+
+// TestParseImmutable_StickinessBetweenParams pins the deliberate
+// scope-limited behaviour: a constraint placed AFTER the YAML value
+// line of its @param still attaches to that @param (matching every
+// other constraint family — sitewide behaviour is preserved bit-for-bit
+// vs pre-PR), but Parse emits a warning to WarnWriter so the
+// misplacement is observable instead of silent.
+//
+// In the layout below `## @immutable` sits between foo's YAML value and
+// the next `## @param baz` header, so it attaches to foo. The canonical
+// form (constraint immediately after its @param header) is shown by
+// TestParseImmutable_StickinessBetweenParams_Canonical.
+func TestParseImmutable_StickinessBetweenParams(t *testing.T) {
+	const yaml = `
+## @param {string} foo - foo desc
+foo: ""
+
+bar: ""
+## @immutable
+## @param {string} baz - baz desc
+baz: ""
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	var warn bytes.Buffer
+	prev := WarnWriter
+	WarnWriter = &warn
+	defer func() { WarnWriter = prev }()
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+
+	byPath := map[string]Raw{}
+	for _, r := range rows {
+		byPath[r.Path[0]] = r
+	}
+
+	require.Contains(t, byPath, "foo")
+	require.Contains(t, byPath, "baz")
+	require.True(t, byPath["foo"].Immutable,
+		"sitewide constraint-attachment behaviour is preserved: late @immutable still attaches to the preceding @param")
+	require.False(t, byPath["baz"].Immutable,
+		"@immutable placed before @param baz attaches to the previous param (foo), not baz")
+	require.Contains(t, warn.String(), "warning",
+		"misplacement must emit a diagnostic to WarnWriter so it is not silent")
+	require.Contains(t, warn.String(), "foo",
+		"warning should name the field the constraint attached to")
+}
+
+// TestParseImmutable_StickinessBetweenParams_Canonical demonstrates the
+// canonical form: constraints come immediately AFTER the @param header.
+func TestParseImmutable_StickinessBetweenParams_Canonical(t *testing.T) {
+	const yaml = `
+## @param {string} foo - foo desc
+foo: ""
+
+bar: ""
+## @param {string} baz - baz desc
+## @immutable
+baz: ""
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+
+	byPath := map[string]Raw{}
+	for _, r := range rows {
+		byPath[r.Path[0]] = r
+	}
+
+	require.False(t, byPath["foo"].Immutable)
+	require.True(t, byPath["baz"].Immutable,
+		"baz picks up @immutable that immediately follows its @param header")
+}
+
+// TestParseImmutable_OnOmitemptyField pins the documented caveat: the
+// rule still lands in the schema, but K8s admission only enforces it
+// while the field is present in both oldSelf and self. The README and
+// the doc comments warn that this means "immutable once set" rather
+// than "immutable from creation" for optional fields. The test exists
+// so that the marker still gets emitted (UI relies on its presence) and
+// to alert a maintainer if a future change ever decides to refuse the
+// combination instead.
+func TestParseImmutable_OnOmitemptyField(t *testing.T) {
+	const yaml = `
+## @param {string} [storageClass] - StorageClass used to store the data.
+## @immutable
+storageClass: ""
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.True(t, rows[0].Immutable)
+	require.True(t, rows[0].OmitEmpty, "[name] should mark the field omitempty")
+}
+
+// TestParseImmutable_AfterEnumIsDropped pins the parser limitation that
+// @immutable (like other constraints) only attaches to the preceding
+// @param/@field. An annotation placed after @enum is silently dropped
+// because lastAnnotated is nil at that point. Documented so a future
+// contributor sees the test rather than the silent drop in production.
+func TestParseImmutable_AfterEnumIsDropped(t *testing.T) {
+	const yaml = `
+## @enum {string} Mode - Operating mode
+## @value standalone
+## @value cluster
+## @immutable
+
+## @param {Mode} mode - Selected mode
+mode: standalone
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+
+	for _, r := range rows {
+		require.False(t, r.Immutable,
+			"@immutable between @enum and @param should attach to nothing (current parser behaviour)")
+	}
+}
+
+func TestGenerateImmutableMarker_NotEmittedByDefault(t *testing.T) {
+	rows := []Raw{
+		{
+			K:        kParam,
+			Path:     []string{"storageClass"},
+			TypeExpr: "string",
+		},
+	}
+
+	root := Build(rows)
+	g := &gen{pkg: "values"}
+	code, _, err := g.Generate(root)
+	require.NoError(t, err)
+
+	require.NotContains(t, string(code), "XValidation",
+		"XValidation marker must not appear without @immutable")
 }
 
 // TestEndToEndValidationConstraintsInSchema tests full pipeline: YAML → JSON Schema.
@@ -1388,6 +1588,50 @@ tags:
 	tags := specPropsProps["tags"].(map[string]any)
 	require.Equal(t, float64(1), tags["minItems"], "tags should have minItems=1")
 	require.Equal(t, float64(5), tags["maxItems"], "tags should have maxItems=5")
+}
+
+// TestEndToEndImmutableInSchema tests the full pipeline for @immutable:
+// YAML → kubebuilder XValidation marker → CRD → values.schema.json carrying
+// the standard x-kubernetes-validations entry.
+func TestEndToEndImmutableInSchema(t *testing.T) {
+	const yaml = `
+## @param {string} storageClass - StorageClass used to store the data.
+## @immutable
+storageClass: ""
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+
+	root := Build(rows)
+	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values", "values.helm.io", "v1alpha1")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	crdBytes, err := CG(filepath.Dir(goFile))
+	require.NoError(t, err)
+
+	schemaPath := filepath.Join(tmpDir, "values.schema.json")
+	require.NoError(t, WriteValuesSchema(crdBytes, schemaPath))
+	schemaBytes, err := os.ReadFile(schemaPath)
+	require.NoError(t, err)
+
+	var schema map[string]any
+	err = json.Unmarshal(schemaBytes, &schema)
+	require.NoError(t, err)
+
+	props := schema["properties"].(map[string]any)
+	sc := props["storageClass"].(map[string]any)
+
+	validations, ok := sc["x-kubernetes-validations"].([]any)
+	require.True(t, ok, "storageClass should carry x-kubernetes-validations")
+	require.Len(t, validations, 1)
+
+	entry := validations[0].(map[string]any)
+	require.Equal(t, "self == oldSelf", entry["rule"])
+	require.Equal(t, "storageClass is immutable", entry["message"])
 }
 
 // TestFieldPatternStillWorks verifies @field annotations work after patterns refactor.

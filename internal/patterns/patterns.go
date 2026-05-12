@@ -69,3 +69,15 @@ const MinItemsPattern = `^#{1,}\s+@minItems\s+(\d+)\s*$`
 // MaxItemsPattern matches @maxItems annotations with integer value.
 // Groups: 1=integer value
 const MaxItemsPattern = `^#{1,}\s+@maxItems\s+(\d+)\s*$`
+
+// ImmutablePattern matches @immutable flag annotation.
+// Renders as a CEL XValidation rule (self == oldSelf) at the property
+// level. CAVEAT: per Kubernetes x-kubernetes-validations semantics, a
+// property-level rule is evaluated only when the property is present in
+// both oldSelf and self. For optional/omitempty/pointer fields the rule
+// therefore enforces "immutable once set" rather than "immutable from
+// creation": the field can still be added on a later update if it was
+// absent on create. For "immutable from creation" semantics make the
+// field required (omit `[name]` brackets and pointer markers).
+// No capture groups — presence indicates true.
+const ImmutablePattern = `^#{1,}\s+@immutable\s*$`

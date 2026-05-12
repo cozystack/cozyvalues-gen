@@ -118,6 +118,44 @@ size: "medium"
 - **Pointers**: `{*type}` or `{?type}` (equivalent)
 - **Default values**: `fieldName=value` or `fieldName="value"`
 
+### Validation constraints
+
+Stack these tags on the line(s) after a `@param` or `@field`. They emit kubebuilder validation markers on the generated Go struct and JSON-schema entries in `values.schema.json`.
+
+```yaml
+## @param {int} port - Port number
+## @minimum 1
+## @maximum 65535
+port: 8080
+
+## @param {string} name - DNS-compatible name
+## @minLength 1
+## @maxLength 63
+## @pattern ^[a-z0-9-]+$
+name: ""
+
+## @param {[]string} tags - Tag list
+## @minItems 1
+## @maxItems 10
+tags: []
+
+## @param {string} storageClass - StorageClass used to store the data.
+## @immutable
+storageClass: ""
+```
+
+Available constraints: `@minimum`, `@maximum`, `@exclusiveMinimum`, `@exclusiveMaximum`, `@minLength`, `@maxLength`, `@pattern`, `@minItems`, `@maxItems`, `@immutable`.
+
+**Placement matters.** Every constraint attaches to the most-recent `@param` or `@field` declaration. Place constraints **immediately after** the `@param`/`@field` header and **before** the YAML value line. If a constraint appears after the YAML value (e.g. floating between two `@param` blocks), it still attaches to the preceding `@param` for backwards compatibility, but `cozyvalues-gen` prints
+
+```
+cozyvalues-gen: <file>:<line>: warning: constraint on this line still attaches to "<field>" across an intervening YAML value line; move it to immediately after the @param/@field header for clarity
+```
+
+so the misplacement is visible in `make generate` output. The warning never fails the build — fix the placement to silence it.
+
+`@immutable` is a flag (no argument). It emits a CEL `XValidation` rule (`self == oldSelf`) at the property level. **Caveat**: per Kubernetes `x-kubernetes-validations` semantics, a property-level rule is evaluated only when the property is present in both `oldSelf` and `self`. For optional/omitempty/pointer fields the rule therefore enforces *immutable once set* rather than *immutable from creation* — the field can still be added on a subsequent update if it was absent on create. To enforce *immutable from creation* make the field required (omit `[name]` brackets and pointer markers).
+
 ## Supported value types
 
 | Annotation token               | Go type                                    | JSON Schema             | Examples                             |
