@@ -45,6 +45,7 @@ const (
 	aliasResources   = "resources"
 	aliasRequest     = "request"
 	aliasLimit       = "limit"
+	aliasIntOrString = "intOrString"
 )
 
 type Raw struct {
@@ -575,7 +576,7 @@ func isPrimitive(t string) bool {
 	switch t {
 	case "string", "bool", "int", "int32", "int64", "float32", "float64",
 		aliasQuantity, aliasDuration, aliasTime,
-		aliasObject, aliasResources, aliasRequest, aliasLimit:
+		aliasObject, aliasResources, aliasRequest, aliasLimit, aliasIntOrString:
 		return true
 	default:
 		return false
@@ -632,6 +633,9 @@ func (g *gen) resolve(raw string) string {
 	case aliasObject:
 		g.addImpAlias("k8s.io/apimachinery/pkg/runtime", "k8sRuntime")
 		return "k8sRuntime.RawExtension"
+	case aliasIntOrString:
+		g.addImpAlias("k8s.io/apimachinery/pkg/util/intstr", "intstr")
+		return "intstr.IntOrString"
 	}
 
 	// context-aware resolution for well-known object-ish aliases

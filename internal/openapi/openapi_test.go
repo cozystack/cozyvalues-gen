@@ -393,6 +393,45 @@ func TestResolveSpecialAliases(t *testing.T) {
 	// ensure imports were recorded
 	require.Contains(t, g.imp, "k8s.io/apimachinery/pkg/apis/meta/v1")
 	require.Contains(t, g.imp, "k8s.io/apimachinery/pkg/api/resource")
+
+	require.Equal(t, "intstr.IntOrString", g.resolve("intOrString"))
+	require.Contains(t, g.imp, "k8s.io/apimachinery/pkg/util/intstr")
+}
+
+func TestIntOrStringSchemaGeneration(t *testing.T) {
+	src := `## @typedef {struct} PostgreSQL
+## @field {map[string]intOrString} [parameters] - PostgreSQL parameters, strings or integers.
+
+## @param {PostgreSQL} postgresql - PostgreSQL server configuration.
+postgresql:
+  parameters:
+    max_connections: "100"
+`
+	tmpfile := writeTempFile(src)
+	rows, err := Parse(tmpfile)
+	require.NoError(t, err)
+	root := Build(rows)
+
+	g := &gen{pkg: "testpkg", groupName: "apps.cozystack.io", versionName: "v1alpha1"}
+	goCode, _, err := g.Generate(root)
+	require.NoError(t, err)
+	require.Contains(t, string(goCode), "intstr.IntOrString")
+	require.Contains(t, string(goCode), `"k8s.io/apimachinery/pkg/util/intstr"`)
+
+	// Verify full schema generation produces anyOf for intOrString map values.
+	tmpdir, gofile, err := WriteGeneratedGoAndStub(root, "testpkg", "apps.cozystack.io", "v1alpha1")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpdir)
+	crdBytes, err := CG(filepath.Dir(gofile))
+	require.NoError(t, err)
+	outfile := filepath.Join(tmpdir, "schema.json")
+	err = WriteValuesSchema(crdBytes, outfile)
+	require.NoError(t, err)
+	schemaBytes, err := os.ReadFile(outfile)
+	require.NoError(t, err)
+	schema := string(schemaBytes)
+	require.Contains(t, schema, `"x-kubernetes-int-or-string": true`)
+	require.Contains(t, schema, `"anyOf"`)
 }
 
 /* -------------------------------------------------------------------------- */

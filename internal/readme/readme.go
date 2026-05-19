@@ -19,6 +19,7 @@ const (
 	aliasTime        = "time"
 	aliasObject      = "object"
 	aliasEmptyObject = "emptyobject"
+	aliasIntOrString = "intOrString"
 )
 
 // additional string-format aliases
@@ -869,7 +870,7 @@ func isPrimitive(t string) bool {
 	switch base {
 	case "string", "bool", "int", "int32", "int64",
 		"float32", "float64",
-		aliasQuantity, aliasDuration, aliasTime, aliasObject, aliasEmptyObject:
+		aliasQuantity, aliasDuration, aliasTime, aliasObject, aliasEmptyObject, aliasIntOrString:
 		return true
 	default:
 		return false
