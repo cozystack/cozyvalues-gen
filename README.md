@@ -131,6 +131,7 @@ size: "medium"
 | `time`                         | `metav1.Time`                              | string (RFC 3339)       | `"2025-08-07T12:00:00Z"`             |
 | `object`                       | `k8sRuntime.RawExtension`                  | any JSON/YAML           | `{"aaa": 123, "foo": "bar"}`         |
 | `emptyobject`                  | empty struct (`struct{}`) **–** no fields  | `{}`                    | `{}`                                 |
+| `intOrString`                  | `intstr.IntOrString`                       | `anyOf` int or string   | `100`, `"100"` (PostgreSQL params)   |
 | `*<primitive>`                 | pointer to that primitive (`nil` allowed)  | primitive or `null`     | `"asd"`, `null` …                    |
 | `<CustomType>`                 | generated struct                           | object                  | declared from `@field` annotations   |
 | `*<CustomType>`                | pointer to generated struct                | object or `null`        | `null`                               |

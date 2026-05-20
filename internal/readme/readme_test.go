@@ -946,6 +946,24 @@ topology:
 	require.NotContains(t, table, "`*object`", "pointer-to-enum should not be *object")
 }
 
+func TestDefaultValueForTypeIntOrString(t *testing.T) {
+	require.Equal(t, "`\"\"`", defaultValueForType("intOrString"),
+		"scalar intOrString without a value should render as empty string, not {}")
+}
+
+func TestIntOrStringScalarRendersAsEmptyString(t *testing.T) {
+	yamlContent := `
+## @param {intOrString} threshold - Scalar that may be string or integer
+threshold:
+`
+	table := renderTableFromValues(t, yamlContent)
+	require.Contains(t, table, "`threshold`")
+	require.Contains(t, table, "`\"\"`",
+		"scalar intOrString without a value should render as empty string in the README table")
+	require.NotContains(t, table, "`{}`",
+		"scalar intOrString must not fall through to object default")
+}
+
 func TestArrayOfEnumsDisplaysCorrectly(t *testing.T) {
 	yamlContent := `
 ## @enum {string} PresetSize - Size preset

@@ -1107,7 +1107,7 @@ func defaultValueForType(t string) string {
 		return "`[]`"
 	case strings.HasPrefix(base, "map["):
 		return "`{}`"
-	case base == "string", base == aliasQuantity:
+	case base == "string", base == aliasQuantity, base == aliasIntOrString:
 		return "`\"\"`"
 	case base == "int":
 		return "`0`"
