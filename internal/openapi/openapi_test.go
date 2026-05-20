@@ -429,9 +429,36 @@ postgresql:
 	require.NoError(t, err)
 	schemaBytes, err := os.ReadFile(outfile)
 	require.NoError(t, err)
-	schema := string(schemaBytes)
-	require.Contains(t, schema, `"x-kubernetes-int-or-string": true`)
-	require.Contains(t, schema, `"anyOf"`)
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(schemaBytes, &doc))
+
+	props, ok := doc["properties"].(map[string]any)
+	require.True(t, ok, "schema has no top-level properties")
+	postgresql, ok := props["postgresql"].(map[string]any)
+	require.True(t, ok, "missing postgresql property")
+	postgresqlProps, ok := postgresql["properties"].(map[string]any)
+	require.True(t, ok, "postgresql has no properties")
+	parameters, ok := postgresqlProps["parameters"].(map[string]any)
+	require.True(t, ok, "missing postgresql.parameters property")
+	addProps, ok := parameters["additionalProperties"].(map[string]any)
+	require.True(t, ok, "parameters has no additionalProperties")
+
+	require.Equal(t, true, addProps["x-kubernetes-int-or-string"],
+		"additionalProperties.x-kubernetes-int-or-string must be true")
+
+	anyOf, ok := addProps["anyOf"].([]any)
+	require.True(t, ok, "additionalProperties.anyOf is missing or not an array")
+
+	types := make([]string, 0, len(anyOf))
+	for _, entry := range anyOf {
+		e, ok := entry.(map[string]any)
+		require.True(t, ok, "anyOf entry is not an object")
+		typeName, _ := e["type"].(string)
+		types = append(types, typeName)
+	}
+	require.ElementsMatch(t, []string{"integer", "string"}, types,
+		"anyOf must contain exactly {type:integer} and {type:string}")
 }
 
 /* -------------------------------------------------------------------------- */
