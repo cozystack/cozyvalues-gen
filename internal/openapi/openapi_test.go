@@ -393,6 +393,72 @@ func TestResolveSpecialAliases(t *testing.T) {
 	// ensure imports were recorded
 	require.Contains(t, g.imp, "k8s.io/apimachinery/pkg/apis/meta/v1")
 	require.Contains(t, g.imp, "k8s.io/apimachinery/pkg/api/resource")
+
+	require.Equal(t, "intstr.IntOrString", g.resolve("intOrString"))
+	require.Contains(t, g.imp, "k8s.io/apimachinery/pkg/util/intstr")
+}
+
+func TestIntOrStringSchemaGeneration(t *testing.T) {
+	src := `## @typedef {struct} PostgreSQL
+## @field {map[string]intOrString} [parameters] - PostgreSQL parameters, strings or integers.
+
+## @param {PostgreSQL} postgresql - PostgreSQL server configuration.
+postgresql:
+  parameters:
+    max_connections: "100"
+`
+	tmpfile := writeTempFile(src)
+	rows, err := Parse(tmpfile)
+	require.NoError(t, err)
+	root := Build(rows)
+
+	g := &gen{pkg: "testpkg", groupName: "apps.cozystack.io", versionName: "v1alpha1"}
+	goCode, _, err := g.Generate(root)
+	require.NoError(t, err)
+	require.Contains(t, string(goCode), "intstr.IntOrString")
+	require.Contains(t, string(goCode), `"k8s.io/apimachinery/pkg/util/intstr"`)
+
+	// Verify full schema generation produces anyOf for intOrString map values.
+	tmpdir, gofile, err := WriteGeneratedGoAndStub(root, "testpkg", "apps.cozystack.io", "v1alpha1")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpdir)
+	crdBytes, err := CG(filepath.Dir(gofile))
+	require.NoError(t, err)
+	outfile := filepath.Join(tmpdir, "schema.json")
+	err = WriteValuesSchema(crdBytes, outfile)
+	require.NoError(t, err)
+	schemaBytes, err := os.ReadFile(outfile)
+	require.NoError(t, err)
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(schemaBytes, &doc))
+
+	props, ok := doc["properties"].(map[string]any)
+	require.True(t, ok, "schema has no top-level properties")
+	postgresql, ok := props["postgresql"].(map[string]any)
+	require.True(t, ok, "missing postgresql property")
+	postgresqlProps, ok := postgresql["properties"].(map[string]any)
+	require.True(t, ok, "postgresql has no properties")
+	parameters, ok := postgresqlProps["parameters"].(map[string]any)
+	require.True(t, ok, "missing postgresql.parameters property")
+	addProps, ok := parameters["additionalProperties"].(map[string]any)
+	require.True(t, ok, "parameters has no additionalProperties")
+
+	require.Equal(t, true, addProps["x-kubernetes-int-or-string"],
+		"additionalProperties.x-kubernetes-int-or-string must be true")
+
+	anyOf, ok := addProps["anyOf"].([]any)
+	require.True(t, ok, "additionalProperties.anyOf is missing or not an array")
+
+	types := make([]string, 0, len(anyOf))
+	for _, entry := range anyOf {
+		e, ok := entry.(map[string]any)
+		require.True(t, ok, "anyOf entry is not an object")
+		typeName, _ := e["type"].(string)
+		types = append(types, typeName)
+	}
+	require.ElementsMatch(t, []string{"integer", "string"}, types,
+		"anyOf must contain exactly {type:integer} and {type:string}")
 }
 
 /* -------------------------------------------------------------------------- */
