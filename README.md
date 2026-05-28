@@ -231,12 +231,35 @@ These tokens map to a plain `string` field, **plus** `format: "<alias>"` in the 
 | `byte`          | `SGVsbG8=` (base64)                    |
 | `password`      | *(hidden by most UIs)*                 |
 | `date`          | `2025-08-07`                           |
+| `date-time`     | `2025-08-07T12:34:56Z`                 |
 
 > **Tip:** use any alias exactly like a regular type, e.g.  
 > ```yaml
 > ## @param apiURL {uri} External URL of the API
 > apiURL: ""
 > ```
+
+### @example
+
+Attach OpenAPI `examples` to the most-recent `@param` / `@field` / `@property`.
+Each `@example` line accepts one JSON-encoded value (double-quoted string,
+number, boolean, `null`, object, array). Single-quoted strings and bare tokens
+are coerced to JSON strings. Multiple lines accumulate into an `examples` array.
+
+```yaml
+## @param {date-time} restoreAt - Point-in-time recovery target.
+## @example "2026-05-28T12:34:56Z"
+restoreAt: ""
+
+## @typedef {struct} Sizing
+## @field {string} flavor - Instance flavor.
+## @example "small"
+## @example "large"
+```
+
+The values land in the generated `values.schema.json` as
+`"examples": ["2026-05-28T12:34:56Z"]` on the matching property, which JSON
+Schema renderers (RJSF, etc.) pick up as placeholder/example text.
 
 ---
 

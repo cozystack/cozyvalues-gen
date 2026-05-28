@@ -93,6 +93,10 @@ type Raw struct {
 	// (keys starting with "x-") attached via @x-<keyword> directives.
 	// These are emitted verbatim into the JSON schema only, never into Go types.
 	Extensions map[string]interface{}
+
+	// Examples are JSON-encoded values accumulated from `## @example <value>` lines.
+	// They are surfaced as the OpenAPI `examples` array on the matching schema property.
+	Examples []json.RawMessage
 }
 
 // JSDoc-like syntax patterns (using shared patterns from internal/patterns)
@@ -114,6 +118,7 @@ var (
 	reMinItems         = regexp.MustCompile(patterns.MinItemsPattern)
 	reMaxItems         = regexp.MustCompile(patterns.MaxItemsPattern)
 	reImmutable        = regexp.MustCompile(patterns.ImmutablePattern)
+	reExample          = regexp.MustCompile(patterns.ExamplePattern)
 
 	// Vendor extension directive (@x-<keyword>)
 	reVendorExtension = regexp.MustCompile(patterns.VendorExtensionPattern)
@@ -164,6 +169,7 @@ var stringFormats = []string{
 	"byte",
 	"password",
 	"date",
+	"date-time",
 }
 
 func isStringFormat(s string) bool {
@@ -173,6 +179,27 @@ func isStringFormat(s string) bool {
 		}
 	}
 	return false
+}
+
+// normalizeExample converts a captured @example value into a json.RawMessage.
+// Accepts JSON literals (`"x"`, numbers, booleans, null, objects, arrays),
+// single-quoted strings, and bare tokens — the latter two are coerced to JSON strings.
+func normalizeExample(raw string) (json.RawMessage, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("empty example")
+	}
+	// Single-quoted → JSON-quoted.
+	if len(raw) >= 2 && raw[0] == '\'' && raw[len(raw)-1] == '\'' {
+		return json.Marshal(raw[1 : len(raw)-1])
+	}
+	// Already-valid JSON.
+	var probe interface{}
+	if err := json.Unmarshal([]byte(raw), &probe); err == nil {
+		return json.RawMessage(raw), nil
+	}
+	// Bare token (e.g. `foo`, `2026-05-28T12:34:56Z` without quotes) → JSON string.
+	return json.Marshal(raw)
 }
 
 func Parse(file string) ([]Raw, error) {
@@ -331,6 +358,14 @@ func Parse(file string) ([]Raw, error) {
 					lastAnnotated.Extensions = map[string]interface{}{}
 				}
 				lastAnnotated.Extensions[key] = value
+				continue
+			}
+			if m := reExample.FindStringSubmatch(line); m != nil {
+				ex, err := normalizeExample(m[1])
+				if err != nil {
+					return nil, fmt.Errorf("invalid @example value %q for %q: %w", m[1], paramName, err)
+				}
+				lastAnnotated.Examples = append(lastAnnotated.Examples, ex)
 				continue
 			}
 		}
@@ -523,6 +558,9 @@ type Node struct {
 	// Extensions holds arbitrary OpenAPI/JSON-Schema vendor extensions
 	// (keys starting with "x-"). Emitted into the JSON schema only.
 	Extensions map[string]interface{}
+
+	// Examples accumulated from `## @example` lines.
+	Examples []json.RawMessage
 }
 
 func newNode(name string, p *Node) *Node {
@@ -551,6 +589,9 @@ func copyConstraints(node *Node, raw *Raw) {
 	node.MaxItems = raw.MaxItems
 	node.Immutable = raw.Immutable
 	node.Extensions = raw.Extensions
+	if len(raw.Examples) > 0 {
+		node.Examples = append(node.Examples[:0:0], raw.Examples...)
+	}
 }
 
 func Build(rows []Raw) *Node {
@@ -1289,22 +1330,23 @@ func structuralChildren(n *Node, aliases map[string]*Node) map[string]*Node {
 	return nil
 }
 
-// nodeSubtreeHasExtensions reports whether n or any node reachable from it
+// nodeSubtreeNeedsInjection reports whether n or any node reachable from it
 // (through inline children or typedef aliases for direct / []Type /
-// map[string]Type references) carries a vendor extension. Used to decide
-// whether a property needs the order-preserving injection path at all; when
-// it does not, the property is emitted via plain json.MarshalIndent so output
-// stays byte-identical to the pre-extension generator.
-func nodeSubtreeHasExtensions(n *Node, aliases map[string]*Node, seen map[*Node]bool) bool {
+// map[string]Type references) carries a vendor extension or an @example value.
+// Used to decide whether a property needs the order-preserving injection path
+// at all; when it does not, the property is emitted via plain
+// json.MarshalIndent so output stays byte-identical to the pre-extension
+// generator.
+func nodeSubtreeNeedsInjection(n *Node, aliases map[string]*Node, seen map[*Node]bool) bool {
 	if n == nil || seen[n] {
 		return false
 	}
 	seen[n] = true
-	if len(n.Extensions) > 0 {
+	if len(n.Extensions) > 0 || len(n.Examples) > 0 {
 		return true
 	}
 	for _, child := range structuralChildren(n, aliases) {
-		if nodeSubtreeHasExtensions(child, aliases, seen) {
+		if nodeSubtreeNeedsInjection(child, aliases, seen) {
 			return true
 		}
 	}
@@ -1312,17 +1354,30 @@ func nodeSubtreeHasExtensions(n *Node, aliases map[string]*Node, seen map[*Node]
 }
 
 // injectExtensions walks an order-preserving JSON schema node alongside its
-// corresponding Node, writing any vendor extensions (x-* keys) declared on
-// the node and recursively descending into nested object properties, array
-// items and map values. Extensions are emitted into the JSON schema only.
+// corresponding Node, writing any vendor extensions (x-* keys) and `examples`
+// arrays declared on the node and recursively descending into nested object
+// properties, array items and map values. Both are emitted into the JSON
+// schema only (`examples` is not a kubebuilder marker controller-gen emits, so
+// it is layered on here rather than coming from the generated CRD).
 //
-// Injected x-* keys are appended as the last key(s) of their object so that
-// all pre-existing keys keep their original relative order and position. This
+// Injected keys are appended as the last key(s) of their object so that all
+// pre-existing keys keep their original relative order and position. This
 // guarantees byte-identical output to the pre-extension generator for any
-// schema that carries no extensions.
+// schema that carries no extensions and no examples.
 func injectExtensions(schema *orderedMap, n *Node, aliases map[string]*Node) {
 	if schema == nil || n == nil {
 		return
+	}
+
+	if len(n.Examples) > 0 {
+		vals := make([]interface{}, 0, len(n.Examples))
+		for _, raw := range n.Examples {
+			var v interface{}
+			if err := json.Unmarshal(raw, &v); err == nil {
+				vals = append(vals, v)
+			}
+		}
+		schema.set("examples", vals)
 	}
 
 	for _, k := range sortedExtensionKeys(n.Extensions) {
@@ -1558,13 +1613,13 @@ func WriteValuesSchemaWithOrder(crdBytes []byte, outPath string, root *Node) err
 					first = false
 
 					// Fast path: when this property's subtree carries no
-					// vendor extensions, emit it via plain MarshalIndent so
-					// the output is byte-identical to the pre-extension
-					// generator (JSONSchemaProps marshals in struct-field
-					// order, not alphabetical). Only properties that actually
-					// carry an x-* directive take the order-preserving
-					// injection path below.
-					if !nodeSubtreeHasExtensions(node, root.Child, map[*Node]bool{}) {
+					// vendor extensions and no @example values, emit it via
+					// plain MarshalIndent so the output is byte-identical to
+					// the pre-extension generator (JSONSchemaProps marshals in
+					// struct-field order, not alphabetical). Only properties
+					// that actually carry an x-* directive or an @example take
+					// the order-preserving injection path below.
+					if !nodeSubtreeNeedsInjection(node, root.Child, map[*Node]bool{}) {
 						propJSON, err := json.MarshalIndent(prop, "    ", "  ")
 						if err != nil {
 							return err
@@ -1576,8 +1631,9 @@ func WriteValuesSchemaWithOrder(crdBytes []byte, outPath string, root *Node) err
 					// Injection path: marshal in struct-field order, round-trip
 					// through an order-preserving orderedMap (not a Go map,
 					// which sorts keys alphabetically), then append the x-*
-					// keys declared on this node and nested typedef fields
-					// without reordering any existing key.
+					// extension keys and `examples` arrays declared on this
+					// node and nested typedef fields without reordering any
+					// existing key.
 					rawJSON, err := json.Marshal(prop)
 					if err != nil {
 						return err

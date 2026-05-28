@@ -88,3 +88,8 @@ const ImmutablePattern = `^#{1,}\s+@immutable\s*$`
 // directives (@param/@field/@enum/@minimum/...) since none of those begin with "x-".
 // Groups: 1=full key (e.g. "x-cozystack-options"), 2=raw value text (parsed as YAML flow)
 const VendorExtensionPattern = `^#{1,}\s+@(x-[A-Za-z0-9][\w-]*)\s+(.+)$`
+
+// ExamplePattern matches @example annotations and captures the literal JSON value.
+// Multiple @example lines accumulate into the OpenAPI `examples` array on the preceding @param/@field.
+// Groups: 1=raw value (any token DefaultValuePattern accepts — quoted strings, numbers, JSON, etc.)
+const ExamplePattern = `^#{1,}\s+@example\s+(` + DefaultValuePattern + `)\s*$`
