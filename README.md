@@ -156,6 +156,38 @@ so the misplacement is visible in `make generate` output. The warning never fail
 
 `@immutable` is a flag (no argument). It emits a CEL `XValidation` rule (`self == oldSelf`) at the property level. **Caveat**: per Kubernetes `x-kubernetes-validations` semantics, a property-level rule is evaluated only when the property is present in both `oldSelf` and `self`. For optional/omitempty/pointer fields the rule therefore enforces *immutable once set* rather than *immutable from creation* — the field can still be added on a subsequent update if it was absent on create. To enforce *immutable from creation* make the field required (omit `[name]` brackets and pointer markers).
 
+### Vendor extensions (`@x-...`)
+
+Attach an arbitrary OpenAPI/JSON-Schema **vendor extension keyword** (any key starting with `x-`) to a `@param` or `@field`. The directive name carries the keyword: `## @x-<keyword> <value>` emits `x-<keyword>: <value>` onto that property in the generated JSON schema. The value is parsed as YAML flow, so objects, arrays and scalars are all supported. This is a pure passthrough — no keyword is interpreted or hardcoded.
+
+Vendor extensions are emitted into the **JSON schema only**; they never appear in the generated Go types (extensions are schema metadata, not data shapes).
+
+```yaml
+## @param {string} instanceType - Virtual Machine instance type.
+## @x-cozystack-options {source: instancetype}
+instanceType: "u1.medium"
+```
+
+produces:
+
+```json
+"instanceType": {
+  "type": "string",
+  "description": "Virtual Machine instance type.",
+  "x-cozystack-options": { "source": "instancetype" }
+}
+```
+
+When declared on a `@typedef` field, the extension propagates everywhere the type is referenced — including `[]Type` (under `items.properties`) and `map[string]Type` (under `additionalProperties.properties`):
+
+```yaml
+## @typedef {struct} GPU - GPU device configuration.
+## @field {string} name - The name of the GPU resource to attach.
+## @x-cozystack-options {source: gpu}
+```
+
+Multiple `@x-*` lines may be attached to a single field (each with a distinct key). Values may be objects (`{a: 1}`), arrays (`[{a: 1}]`) or scalars (`42`, `true`, `"text"`). Injected `x-*` keys are appended after the property's existing keys, so adding a vendor extension never reorders the rest of the schema.
+
 ## Supported value types
 
 | Annotation token               | Go type                                    | JSON Schema             | Examples                             |
