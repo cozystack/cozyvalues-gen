@@ -81,3 +81,10 @@ const MaxItemsPattern = `^#{1,}\s+@maxItems\s+(\d+)\s*$`
 // field required (omit `[name]` brackets and pointer markers).
 // No capture groups — presence indicates true.
 const ImmutablePattern = `^#{1,}\s+@immutable\s*$`
+
+// VendorExtensionPattern matches @x-<keyword> annotations carrying an arbitrary
+// OpenAPI/JSON-Schema vendor extension keyword. The matched key always starts
+// with "x-" (e.g. @x-cozystack-options) and never collides with the built-in
+// directives (@param/@field/@enum/@minimum/...) since none of those begin with "x-".
+// Groups: 1=full key (e.g. "x-cozystack-options"), 2=raw value text (parsed as YAML flow)
+const VendorExtensionPattern = `^#{1,}\s+@(x-[A-Za-z0-9][\w-]*)\s+(.+)$`
