@@ -16,6 +16,7 @@ import (
 
 	"github.com/cozystack/cozyvalues-gen/internal/patterns"
 	"go.etcd.io/etcd/version"
+	"gopkg.in/yaml.v3"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"sigs.k8s.io/controller-tools/pkg/crd"
 	crdmarkers "sigs.k8s.io/controller-tools/pkg/crd/markers"
@@ -87,6 +88,11 @@ type Raw struct {
 	// Make the field required (no `[name]` brackets, no pointer) for full
 	// "immutable from creation" semantics.
 	Immutable bool
+
+	// Extensions holds arbitrary OpenAPI/JSON-Schema vendor extensions
+	// (keys starting with "x-") attached via @x-<keyword> directives.
+	// These are emitted verbatim into the JSON schema only, never into Go types.
+	Extensions map[string]interface{}
 }
 
 // JSDoc-like syntax patterns (using shared patterns from internal/patterns)
@@ -108,6 +114,9 @@ var (
 	reMinItems         = regexp.MustCompile(patterns.MinItemsPattern)
 	reMaxItems         = regexp.MustCompile(patterns.MaxItemsPattern)
 	reImmutable        = regexp.MustCompile(patterns.ImmutablePattern)
+
+	// Vendor extension directive (@x-<keyword>)
+	reVendorExtension = regexp.MustCompile(patterns.VendorExtensionPattern)
 
 	allConstraintREs = []*regexp.Regexp{
 		reMinimum, reMaximum, reExclusiveMinimum, reExclusiveMaximum,
@@ -312,6 +321,18 @@ func Parse(file string) ([]Raw, error) {
 				lastAnnotated.Immutable = true
 				continue
 			}
+			if m := reVendorExtension.FindStringSubmatch(line); m != nil {
+				key := m[1]
+				var value interface{}
+				if err := yaml.Unmarshal([]byte(m[2]), &value); err != nil {
+					return nil, fmt.Errorf("invalid @%s value %q for %q: %w", key, m[2], paramName, err)
+				}
+				if lastAnnotated.Extensions == nil {
+					lastAnnotated.Extensions = map[string]interface{}{}
+				}
+				lastAnnotated.Extensions[key] = value
+				continue
+			}
 		}
 
 		// Check for @param
@@ -498,6 +519,10 @@ type Node struct {
 	// Make the field required (no `[name]` brackets, no pointer) for full
 	// "immutable from creation" semantics.
 	Immutable bool
+
+	// Extensions holds arbitrary OpenAPI/JSON-Schema vendor extensions
+	// (keys starting with "x-"). Emitted into the JSON schema only.
+	Extensions map[string]interface{}
 }
 
 func newNode(name string, p *Node) *Node {
@@ -525,6 +550,7 @@ func copyConstraints(node *Node, raw *Raw) {
 	node.MinItems = raw.MinItems
 	node.MaxItems = raw.MaxItems
 	node.Immutable = raw.Immutable
+	node.Extensions = raw.Extensions
 }
 
 func Build(rows []Raw) *Node {
@@ -1224,6 +1250,275 @@ func CG(pkgDir string) ([]byte, error) {
 /*  Helm values JSON Schema                                                   */
 /* -------------------------------------------------------------------------- */
 
+// baseTypeName extracts the underlying named type from a type expression,
+// stripping pointer, slice and map wrappers (e.g. "[]*GPU" -> "GPU",
+// "map[string]NodeGroup" -> "NodeGroup", "*Config" -> "Config").
+func baseTypeName(expr string) string {
+	expr = strings.TrimSpace(expr)
+	expr = strings.TrimPrefix(expr, "*")
+	if strings.HasPrefix(expr, "[]") {
+		return baseTypeName(expr[2:])
+	}
+	if strings.HasPrefix(expr, "map[") {
+		if i := strings.Index(expr, "]"); i != -1 {
+			return baseTypeName(expr[i+1:])
+		}
+	}
+	return expr
+}
+
+// structuralChildren returns the child nodes that describe the object
+// properties of n. If n declares its own inline children they are used;
+// otherwise the node's type expression is resolved against the typedef
+// aliases so that extensions on typedef fields propagate wherever the type
+// is referenced (including via []Type and map[string]Type).
+func structuralChildren(n *Node, aliases map[string]*Node) map[string]*Node {
+	if n == nil {
+		return nil
+	}
+	if len(n.Child) > 0 {
+		return n.Child
+	}
+	base := baseTypeName(n.TypeExpr)
+	if base == "" {
+		return nil
+	}
+	if alias, ok := aliases[base]; ok && alias != n {
+		return alias.Child
+	}
+	return nil
+}
+
+// nodeSubtreeHasExtensions reports whether n or any node reachable from it
+// (through inline children or typedef aliases for direct / []Type /
+// map[string]Type references) carries a vendor extension. Used to decide
+// whether a property needs the order-preserving injection path at all; when
+// it does not, the property is emitted via plain json.MarshalIndent so output
+// stays byte-identical to the pre-extension generator.
+func nodeSubtreeHasExtensions(n *Node, aliases map[string]*Node, seen map[*Node]bool) bool {
+	if n == nil || seen[n] {
+		return false
+	}
+	seen[n] = true
+	if len(n.Extensions) > 0 {
+		return true
+	}
+	for _, child := range structuralChildren(n, aliases) {
+		if nodeSubtreeHasExtensions(child, aliases, seen) {
+			return true
+		}
+	}
+	return false
+}
+
+// injectExtensions walks an order-preserving JSON schema node alongside its
+// corresponding Node, writing any vendor extensions (x-* keys) declared on
+// the node and recursively descending into nested object properties, array
+// items and map values. Extensions are emitted into the JSON schema only.
+//
+// Injected x-* keys are appended as the last key(s) of their object so that
+// all pre-existing keys keep their original relative order and position. This
+// guarantees byte-identical output to the pre-extension generator for any
+// schema that carries no extensions.
+func injectExtensions(schema *orderedMap, n *Node, aliases map[string]*Node) {
+	if schema == nil || n == nil {
+		return
+	}
+
+	for _, k := range sortedExtensionKeys(n.Extensions) {
+		schema.set(k, n.Extensions[k])
+	}
+
+	children := structuralChildren(n, aliases)
+	if children == nil {
+		return
+	}
+
+	// Object properties.
+	if props, ok := schema.get("properties").(*orderedMap); ok {
+		for name, child := range children {
+			if sub, ok := props.get(name).(*orderedMap); ok {
+				injectExtensions(sub, child, aliases)
+			}
+		}
+	}
+
+	// Array element type ([]Type) — children describe the element struct.
+	if items, ok := schema.get("items").(*orderedMap); ok {
+		injectExtensionsForElement(items, n, aliases)
+	}
+
+	// Map value type (map[string]Type) — children describe the value struct.
+	if ap, ok := schema.get("additionalProperties").(*orderedMap); ok {
+		injectExtensionsForElement(ap, n, aliases)
+	}
+}
+
+// injectExtensionsForElement injects extensions into the element schema of an
+// array or map, using the children that describe that element's struct.
+func injectExtensionsForElement(elem *orderedMap, n *Node, aliases map[string]*Node) {
+	children := structuralChildren(n, aliases)
+	if children == nil {
+		return
+	}
+	if props, ok := elem.get("properties").(*orderedMap); ok {
+		for name, child := range children {
+			if sub, ok := props.get(name).(*orderedMap); ok {
+				injectExtensions(sub, child, aliases)
+			}
+		}
+	}
+}
+
+// sortedExtensionKeys returns the keys of an Extensions map in a deterministic
+// (alphabetical) order so that multiple x-* keys on a single field are emitted
+// stably across runs.
+func sortedExtensionKeys(ext map[string]interface{}) []string {
+	if len(ext) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(ext))
+	for k := range ext {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Order-preserving JSON object representation                                */
+/* -------------------------------------------------------------------------- */
+
+// orderedMap is a JSON object whose key insertion order is preserved across an
+// Unmarshal/Marshal round-trip. It is used instead of map[string]interface{}
+// (which sorts keys alphabetically on marshal) so that the injected schema
+// stays byte-identical to direct json.Marshal of the source struct, except for
+// the appended vendor-extension (x-*) keys.
+type orderedMap struct {
+	keys   []string
+	values map[string]interface{}
+}
+
+func newOrderedMap() *orderedMap {
+	return &orderedMap{values: map[string]interface{}{}}
+}
+
+func (m *orderedMap) get(key string) interface{} {
+	if m == nil {
+		return nil
+	}
+	return m.values[key]
+}
+
+// set inserts or updates a key. New keys are appended, preserving order;
+// existing keys keep their original position.
+func (m *orderedMap) set(key string, value interface{}) {
+	if _, exists := m.values[key]; !exists {
+		m.keys = append(m.keys, key)
+	}
+	m.values[key] = value
+}
+
+// UnmarshalJSON decodes a JSON value into ordered structures. Objects become
+// *orderedMap (preserving key order), arrays become []interface{} whose object
+// elements are also *orderedMap, and scalars decode normally.
+func (m *orderedMap) UnmarshalJSON(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return fmt.Errorf("orderedMap: expected object, got %v", tok)
+	}
+	return m.decodeObject(dec)
+}
+
+func (m *orderedMap) decodeObject(dec *json.Decoder) error {
+	m.values = map[string]interface{}{}
+	m.keys = nil
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := keyTok.(string)
+		if !ok {
+			return fmt.Errorf("orderedMap: expected string key, got %v", keyTok)
+		}
+		val, err := decodeValue(dec)
+		if err != nil {
+			return err
+		}
+		m.set(key, val)
+	}
+	// Consume closing '}'.
+	if _, err := dec.Token(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// decodeValue decodes the next JSON value from dec, producing *orderedMap for
+// objects and []interface{} for arrays.
+func decodeValue(dec *json.Decoder) (interface{}, error) {
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := tok.(json.Delim); ok {
+		switch d {
+		case '{':
+			child := newOrderedMap()
+			if err := child.decodeObject(dec); err != nil {
+				return nil, err
+			}
+			return child, nil
+		case '[':
+			arr := []interface{}{}
+			for dec.More() {
+				v, err := decodeValue(dec)
+				if err != nil {
+					return nil, err
+				}
+				arr = append(arr, v)
+			}
+			// Consume closing ']'.
+			if _, err := dec.Token(); err != nil {
+				return nil, err
+			}
+			return arr, nil
+		}
+	}
+	return tok, nil
+}
+
+// MarshalJSON emits the object with keys in their preserved insertion order.
+func (m *orderedMap) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, k := range m.keys {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		kb, err := json.Marshal(k)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(kb)
+		buf.WriteByte(':')
+		vb, err := json.Marshal(m.values[k])
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(vb)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
 func WriteValuesSchema(crdBytes []byte, outPath string) error {
 	return WriteValuesSchemaWithOrder(crdBytes, outPath, nil)
 }
@@ -1262,12 +1557,47 @@ func WriteValuesSchemaWithOrder(crdBytes []byte, outPath string, root *Node) err
 					}
 					first = false
 
-					propJSON, err := json.MarshalIndent(prop, "    ", "  ")
+					// Fast path: when this property's subtree carries no
+					// vendor extensions, emit it via plain MarshalIndent so
+					// the output is byte-identical to the pre-extension
+					// generator (JSONSchemaProps marshals in struct-field
+					// order, not alphabetical). Only properties that actually
+					// carry an x-* directive take the order-preserving
+					// injection path below.
+					if !nodeSubtreeHasExtensions(node, root.Child, map[*Node]bool{}) {
+						propJSON, err := json.MarshalIndent(prop, "    ", "  ")
+						if err != nil {
+							return err
+						}
+						buf.WriteString(fmt.Sprintf("    \"%s\": %s", key, string(propJSON)))
+						continue
+					}
+
+					// Injection path: marshal in struct-field order, round-trip
+					// through an order-preserving orderedMap (not a Go map,
+					// which sorts keys alphabetically), then append the x-*
+					// keys declared on this node and nested typedef fields
+					// without reordering any existing key.
+					rawJSON, err := json.Marshal(prop)
 					if err != nil {
 						return err
 					}
+					propMap := newOrderedMap()
+					if err := json.Unmarshal(rawJSON, propMap); err != nil {
+						return err
+					}
+					injectExtensions(propMap, node, root.Child)
 
-					buf.WriteString(fmt.Sprintf("    \"%s\": %s", key, string(propJSON)))
+					compact, err := json.Marshal(propMap)
+					if err != nil {
+						return err
+					}
+					var indented bytes.Buffer
+					if err := json.Indent(&indented, compact, "    ", "  "); err != nil {
+						return err
+					}
+
+					buf.WriteString(fmt.Sprintf("    \"%s\": %s", key, indented.String()))
 				}
 			}
 		}
