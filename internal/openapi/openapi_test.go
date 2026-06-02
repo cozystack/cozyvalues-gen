@@ -1757,3 +1757,202 @@ func TestFieldConstraintsInBuild(t *testing.T) {
 	require.NotNil(t, portNode.Maximum)
 	require.Equal(t, 65535.0, *portNode.Maximum)
 }
+
+/* -------------------------------------------------------------------------- */
+/*  date-time format alias                                                    */
+/* -------------------------------------------------------------------------- */
+
+func TestDateTimeFormatAlias(t *testing.T) {
+	require.True(t, isStringFormat("date-time"), "date-time must be a registered string format")
+}
+
+func TestEmitFieldAddsDateTimeFormatAnnotation(t *testing.T) {
+	const valuesYAML = `
+## @param {date-time} restoreAt - RFC3339 timestamp
+restoreAt: ""
+`
+	rows, err := Parse(writeTempFile(valuesYAML))
+	require.NoError(t, err)
+	root := Build(rows)
+
+	g := &gen{pkg: "values"}
+	formatted, _, err := g.Generate(root)
+	require.NoError(t, err)
+
+	require.Contains(t, string(formatted), "// +kubebuilder:validation:Format=date-time",
+		"validation format annotation for date-time not found")
+}
+
+func TestSchemaContainsDateTimeFormat(t *testing.T) {
+	const yamlContent = `
+## @param {date-time} restoreAt - RFC3339 timestamp
+restoreAt: ""
+`
+	tmpValues := writeTempFile(yamlContent)
+	rows, err := Parse(tmpValues)
+	require.NoError(t, err)
+	root := Build(rows)
+
+	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values", "values.helm.io", "v1alpha1")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	crdBytes, err := CG(filepath.Dir(goFile))
+	require.NoError(t, err)
+
+	outSchema := filepath.Join(tmpDir, "values.schema.json")
+	require.NoError(t, WriteValuesSchemaWithOrder(crdBytes, outSchema, root))
+
+	raw, err := os.ReadFile(outSchema)
+	require.NoError(t, err)
+
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(raw, &schema))
+
+	props := schema["properties"].(map[string]any)
+	restoreAt := props["restoreAt"].(map[string]any)
+	require.Equal(t, "string", restoreAt["type"])
+	require.Equal(t, "date-time", restoreAt["format"])
+}
+
+/* -------------------------------------------------------------------------- */
+/*  @example annotation                                                       */
+/* -------------------------------------------------------------------------- */
+
+func TestParseExampleOnParam(t *testing.T) {
+	const src = `
+## @param {string} apiURL - External URL
+## @example "https://api.example.com"
+apiURL: ""
+`
+	rows, err := Parse(writeTempFile(src))
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, []string{"apiURL"}, rows[0].Path)
+	require.Len(t, rows[0].Examples, 1)
+	require.JSONEq(t, `"https://api.example.com"`, string(rows[0].Examples[0]))
+}
+
+func TestParseExampleMultiple(t *testing.T) {
+	const src = `
+## @param {string} flavor - one of
+## @example "small"
+## @example "large"
+flavor: ""
+`
+	rows, err := Parse(writeTempFile(src))
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0].Examples, 2)
+	require.JSONEq(t, `"small"`, string(rows[0].Examples[0]))
+	require.JSONEq(t, `"large"`, string(rows[0].Examples[1]))
+}
+
+func TestParseExampleNonStringValues(t *testing.T) {
+	const src = `
+## @param {int} timeout - seconds
+## @example 30
+## @example 60
+timeout: 30
+`
+	rows, err := Parse(writeTempFile(src))
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0].Examples, 2)
+	require.JSONEq(t, `30`, string(rows[0].Examples[0]))
+	require.JSONEq(t, `60`, string(rows[0].Examples[1]))
+}
+
+func TestSchemaContainsExamplesOnParam(t *testing.T) {
+	const src = `
+## @param {date-time} restoreAt - RFC3339 timestamp
+## @example "2026-05-28T12:34:56Z"
+restoreAt: ""
+`
+	rows, err := Parse(writeTempFile(src))
+	require.NoError(t, err)
+	root := Build(rows)
+
+	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values", "values.helm.io", "v1alpha1")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	crdBytes, err := CG(filepath.Dir(goFile))
+	require.NoError(t, err)
+
+	outSchema := filepath.Join(tmpDir, "values.schema.json")
+	require.NoError(t, WriteValuesSchemaWithOrder(crdBytes, outSchema, root))
+
+	raw, err := os.ReadFile(outSchema)
+	require.NoError(t, err)
+
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(raw, &schema))
+
+	restoreAt := schema["properties"].(map[string]any)["restoreAt"].(map[string]any)
+	require.Equal(t, "date-time", restoreAt["format"])
+	examples, ok := restoreAt["examples"].([]any)
+	require.True(t, ok, "examples must be an array on restoreAt; got %T", restoreAt["examples"])
+	require.Equal(t, []any{"2026-05-28T12:34:56Z"}, examples)
+}
+
+func TestSchemaContainsExamplesOnTypedefField(t *testing.T) {
+	const src = `
+## @typedef {struct} Bootstrap
+## @field {date-time} [recoveryTime] - point-in-time recovery target
+## @example "2026-05-28T12:34:56Z"
+
+## @param {Bootstrap} bootstrap - bootstrap config
+bootstrap:
+  recoveryTime: ""
+`
+	rows, err := Parse(writeTempFile(src))
+	require.NoError(t, err)
+	root := Build(rows)
+
+	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values", "values.helm.io", "v1alpha1")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	crdBytes, err := CG(filepath.Dir(goFile))
+	require.NoError(t, err)
+
+	outSchema := filepath.Join(tmpDir, "values.schema.json")
+	require.NoError(t, WriteValuesSchemaWithOrder(crdBytes, outSchema, root))
+
+	raw, err := os.ReadFile(outSchema)
+	require.NoError(t, err)
+
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(raw, &schema))
+
+	bootstrap := schema["properties"].(map[string]any)["bootstrap"].(map[string]any)
+	recoveryTime := bootstrap["properties"].(map[string]any)["recoveryTime"].(map[string]any)
+	require.Equal(t, "date-time", recoveryTime["format"])
+	require.Equal(t, []any{"2026-05-28T12:34:56Z"}, recoveryTime["examples"])
+}
+
+func TestSchemaOmitsExamplesWhenAbsent(t *testing.T) {
+	const src = `
+## @param {string} bare - no examples here
+bare: ""
+`
+	rows, err := Parse(writeTempFile(src))
+	require.NoError(t, err)
+	root := Build(rows)
+
+	tmpDir, goFile, err := WriteGeneratedGoAndStub(root, "values", "values.helm.io", "v1alpha1")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	crdBytes, err := CG(filepath.Dir(goFile))
+	require.NoError(t, err)
+
+	outSchema := filepath.Join(tmpDir, "values.schema.json")
+	require.NoError(t, WriteValuesSchemaWithOrder(crdBytes, outSchema, root))
+
+	raw, err := os.ReadFile(outSchema)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), `"examples"`,
+		"examples key must not appear when no @example annotations are present")
+}
