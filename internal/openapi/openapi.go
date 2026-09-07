@@ -368,6 +368,12 @@ func Parse(file string) ([]Raw, error) {
 				lastAnnotated.Examples = append(lastAnnotated.Examples, ex)
 				continue
 			}
+		} else if reImmutable.MatchString(line) {
+			// @immutable only attaches to lastAnnotated, so written before the
+			// @param/@field it belongs to it has nothing to attach to and was
+			// silently dropped. Warn so the misplacement is observable, the
+			// same way a too-late constraint already is above.
+			emitWarn(file, lineNum, "@immutable has no preceding @param/@field on this line to attach to, move it after the @param/@field header instead")
 		}
 
 		// Check for @param
