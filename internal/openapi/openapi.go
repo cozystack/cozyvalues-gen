@@ -46,6 +46,7 @@ const (
 	kField
 	kTypedef
 	kEnum
+	kName
 )
 
 const (
@@ -122,6 +123,9 @@ var (
 
 	// Vendor extension directive (@x-<keyword>)
 	reVendorExtension = regexp.MustCompile(patterns.VendorExtensionPattern)
+
+	// Resource-name directive (@name)
+	reName = regexp.MustCompile(patterns.NamePattern)
 
 	allConstraintREs = []*regexp.Regexp{
 		reMinimum, reMaximum, reExclusiveMinimum, reExclusiveMaximum,
@@ -219,6 +223,7 @@ func Parse(file string) ([]Raw, error) {
 	// behaviour for every constraint family), but emit a warning so the
 	// misplacement is observable instead of silent.
 	var lastAnnotatedYAMLPassed bool
+	var seenName bool
 
 	// finalizeLastAnnotated appends the last annotated item to output if it exists
 	finalizeLastAnnotated := func() {
@@ -368,6 +373,42 @@ func Parse(file string) ([]Raw, error) {
 				lastAnnotated.Examples = append(lastAnnotated.Examples, ex)
 				continue
 			}
+		}
+
+		// Check for @name. It declares a schema for the resource's own name,
+		// so it takes the lastAnnotated slot to collect the constraint lines
+		// that follow, but never becomes a values key.
+		if m := reName.FindStringSubmatch(line); m != nil {
+			finalizeLastAnnotated()
+			if currentEnum != nil {
+				currentEnum.Enums = enumValues
+				out = append(out, *currentEnum)
+				currentEnum = nil
+				enumValues = nil
+			}
+
+			if seenName {
+				return nil, fmt.Errorf("%s:%d: duplicate @name annotation", filepath.Base(file), lineNum)
+			}
+			seenName = true
+
+			typeExpr := strings.TrimSpace(m[1])
+			if typeExpr != "string" {
+				return nil, fmt.Errorf("%s:%d: @name must be declared as {string}, got {%s}", filepath.Base(file), lineNum, typeExpr)
+			}
+			desc := ""
+			if len(m) > 2 {
+				desc = m[2]
+			}
+
+			r := Raw{
+				K:           kName,
+				Path:        []string{"name"},
+				TypeExpr:    typeExpr,
+				Description: desc,
+			}
+			lastAnnotated = &r
+			continue
 		}
 
 		// Check for @param
@@ -561,6 +602,12 @@ type Node struct {
 
 	// Examples accumulated from `## @example` lines.
 	Examples []json.RawMessage
+
+	// ResourceName is set on the tree root only. It carries the schema an
+	// application declares for its own resource name via `## @name`, which
+	// describes metadata.name rather than a key inside values.yaml, and is
+	// emitted as the root-level x-cozystack-name extension.
+	ResourceName *Node
 }
 
 func newNode(name string, p *Node) *Node {
@@ -620,6 +667,15 @@ func Build(rows []Raw) *Node {
 			cur.Comment = r.Description
 			cur.TypeExpr = r.TypeExpr
 			cur.Enums = r.Enums
+			continue
+		}
+
+		if r.K == kName {
+			n := newNode("name", nil)
+			n.TypeExpr = r.TypeExpr
+			n.Comment = r.Description
+			copyConstraints(n, &r)
+			root.ResourceName = n
 			continue
 		}
 
@@ -1574,6 +1630,31 @@ func (m *orderedMap) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// resourceNameExtension is the root-level schema key under which a `## @name`
+// declaration is published. It sits beside "properties" rather than inside it
+// because it constrains the resource's metadata.name, not a values key, and
+// carries the "x-" prefix so JSON Schema validators ignore it.
+const resourceNameExtension = "x-cozystack-name"
+
+// marshalResourceName renders a @name node as the JSON object published under
+// resourceNameExtension, indented to sit at the top level of the schema file.
+func marshalResourceName(n *Node) ([]byte, error) {
+	out := struct {
+		Type        string `json:"type"`
+		Description string `json:"description,omitempty"`
+		MinLength   *int64 `json:"minLength,omitempty"`
+		MaxLength   *int64 `json:"maxLength,omitempty"`
+		Pattern     string `json:"pattern,omitempty"`
+	}{
+		Type:        "string",
+		Description: n.Comment,
+		MinLength:   n.MinLength,
+		MaxLength:   n.MaxLength,
+		Pattern:     n.Pattern,
+	}
+	return json.MarshalIndent(out, "  ", "  ")
+}
+
 func WriteValuesSchema(crdBytes []byte, outPath string) error {
 	return WriteValuesSchemaWithOrder(crdBytes, outPath, nil)
 }
@@ -1601,6 +1682,13 @@ func WriteValuesSchemaWithOrder(crdBytes []byte, outPath string, root *Node) err
 		buf.WriteString("{\n")
 		buf.WriteString("  \"title\": \"Chart Values\",\n")
 		buf.WriteString("  \"type\": \"object\",\n")
+		if root.ResourceName != nil {
+			nameJSON, err := marshalResourceName(root.ResourceName)
+			if err != nil {
+				return err
+			}
+			buf.WriteString(fmt.Sprintf("  \"%s\": %s,\n", resourceNameExtension, string(nameJSON)))
+		}
 		buf.WriteString("  \"properties\": {\n")
 
 		first := true

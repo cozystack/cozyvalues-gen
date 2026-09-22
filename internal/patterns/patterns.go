@@ -93,3 +93,10 @@ const VendorExtensionPattern = `^#{1,}\s+@(x-[A-Za-z0-9][\w-]*)\s+(.+)$`
 // Multiple @example lines accumulate into the OpenAPI `examples` array on the preceding @param/@field.
 // Groups: 1=raw value (any token DefaultValuePattern accepts — quoted strings, numbers, JSON, etc.)
 const ExamplePattern = `^#{1,}\s+@example\s+(` + DefaultValuePattern + `)\s*$`
+
+// NamePattern matches the @name annotation, which declares a schema for the
+// resource's own name (metadata.name) rather than for a key inside values.yaml.
+// Constraint annotations that follow it (@maxLength, @minLength, @pattern)
+// accumulate onto it exactly as they do after a @param.
+// Groups: 1=type, 2=description
+const NamePattern = `^#{1,}\s+@name\s+\{([^}]+)\}(?:\s+-\s+(.*))?$`
