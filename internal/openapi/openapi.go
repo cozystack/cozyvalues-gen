@@ -124,8 +124,20 @@ var (
 	// Vendor extension directive (@x-<keyword>)
 	reVendorExtension = regexp.MustCompile(patterns.VendorExtensionPattern)
 
-	// Resource-name directive (@name)
-	reName = regexp.MustCompile(patterns.NamePattern)
+	// Resource-name directive (@name), and the bare token that tells a
+	// malformed @name header apart from an ordinary comment.
+	reName      = regexp.MustCompile(patterns.NamePattern)
+	reNameToken = regexp.MustCompile(`^#{1,}\s+@name\b`)
+
+	// Constraint and extension directives the parser recognises but a
+	// resource name cannot carry: they describe numbers, lists, updates or
+	// arbitrary schema keywords, and marshalResourceName has nowhere to put
+	// them.
+	nameInapplicableREs = []*regexp.Regexp{
+		reMinimum, reMaximum, reExclusiveMinimum, reExclusiveMaximum,
+		reMinItems, reMaxItems, reImmutable, reVendorExtension, reExample,
+	}
+	reDirectiveToken = regexp.MustCompile(`^#{1,}\s+@(\S+)`)
 
 	allConstraintREs = []*regexp.Regexp{
 		reMinimum, reMaximum, reExclusiveMinimum, reExclusiveMaximum,
@@ -224,6 +236,7 @@ func Parse(file string) ([]Raw, error) {
 	// misplacement is observable instead of silent.
 	var lastAnnotatedYAMLPassed bool
 	var seenName bool
+	var nameLine int
 
 	// finalizeLastAnnotated appends the last annotated item to output if it exists
 	finalizeLastAnnotated := func() {
@@ -270,6 +283,18 @@ func Parse(file string) ([]Raw, error) {
 			}
 			enumValues = append(enumValues, value)
 			continue
+		}
+
+		// A recognised directive that a name cannot carry would otherwise be
+		// accumulated and then dropped on output, so `@maximum 32` written
+		// for `@maxLength 32` would leave the name uncapped without a word.
+		if lastAnnotated != nil && lastAnnotated.K == kName {
+			for _, re := range nameInapplicableREs {
+				if re.MatchString(line) {
+					return nil, fmt.Errorf("%s:%d: @%s does not apply to @name, which takes only @minLength, @maxLength and @pattern",
+						filepath.Base(file), lineNum, reDirectiveToken.FindStringSubmatch(line)[1])
+				}
+			}
 		}
 
 		// Check for validation constraints (apply to lastAnnotated @param or @field).
@@ -391,6 +416,7 @@ func Parse(file string) ([]Raw, error) {
 				return nil, fmt.Errorf("%s:%d: duplicate @name annotation", filepath.Base(file), lineNum)
 			}
 			seenName = true
+			nameLine = lineNum
 
 			typeExpr := strings.TrimSpace(m[1])
 			if typeExpr != "string" {
@@ -409,6 +435,12 @@ func Parse(file string) ([]Raw, error) {
 			}
 			lastAnnotated = &r
 			continue
+		}
+		// Anything else opening with @name is a header the strict pattern did
+		// not match. Skipping it would hand the constraints below it to the
+		// @param above.
+		if reNameToken.MatchString(line) {
+			return nil, fmt.Errorf("%s:%d: malformed @name annotation, expected `## @name {string} - description`", filepath.Base(file), lineNum)
 		}
 
 		// Check for @param
@@ -556,7 +588,37 @@ func Parse(file string) ([]Raw, error) {
 		out = append(out, *currentEnum)
 	}
 
+	for _, r := range out {
+		if r.K != kName {
+			continue
+		}
+		if err := validateNameConstraints(r); err != nil {
+			return nil, fmt.Errorf("%s:%d: @name: %w", filepath.Base(file), nameLine, err)
+		}
+	}
+
 	return out, nil
+}
+
+// validateNameConstraints rejects a @name declaration that no name can
+// satisfy, which a consumer enforcing it would turn into a kind that accepts
+// no objects at all. The pattern is compiled with Go's regexp (RE2) because
+// that is what the consumer this directive exists for, the Cozystack API
+// server, evaluates it with; a lookahead is valid JSON Schema but would never
+// be enforced there.
+func validateNameConstraints(r Raw) error {
+	if r.MaxLength != nil && *r.MaxLength == 0 {
+		return fmt.Errorf("@maxLength 0 admits no name")
+	}
+	if r.MinLength != nil && r.MaxLength != nil && *r.MinLength > *r.MaxLength {
+		return fmt.Errorf("@minLength %d exceeds @maxLength %d", *r.MinLength, *r.MaxLength)
+	}
+	if r.Pattern != "" {
+		if _, err := regexp.Compile(r.Pattern); err != nil {
+			return fmt.Errorf("@pattern %q is not a valid RE2 expression: %w", r.Pattern, err)
+		}
+	}
+	return nil
 }
 
 /* -------------------------------------------------------------------------- */

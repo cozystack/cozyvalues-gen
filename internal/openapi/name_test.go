@@ -130,3 +130,104 @@ func TestNameSchemaPatternAndMinLength(t *testing.T) {
 	require.Equal(t, `^[a-z][a-z0-9]*$`, nameSchema["pattern"])
 	require.NotContains(t, nameSchema, "maxLength")
 }
+
+// TestParseNameRejectsInapplicableConstraints covers every recognised
+// directive a name cannot carry. Accepting any of them would drop it on output,
+// so a `@maximum 32` typed for `@maxLength 32` would ship an uncapped name.
+func TestParseNameRejectsInapplicableConstraints(t *testing.T) {
+	for _, directive := range []string{
+		"@minimum 5",
+		"@maximum 32",
+		"@exclusiveMinimum",
+		"@exclusiveMaximum",
+		"@minItems 1",
+		"@maxItems 2",
+		"@immutable",
+		"@x-cozystack-foo bar",
+		`@example "abc"`,
+	} {
+		t.Run(directive, func(t *testing.T) {
+			tmp := writeTempFile("## @name {string} - Cluster name.\n## " + directive + "\n")
+			defer os.Remove(tmp)
+
+			_, err := Parse(tmp)
+			require.ErrorContains(t, err, "does not apply to @name")
+			require.ErrorContains(t, err, ":2:", "error must point at the offending line")
+		})
+	}
+}
+
+// TestParseNameRejectsMalformedHeader keeps a mistyped @name from being
+// skipped, which would hand the constraints under it to the @param above.
+func TestParseNameRejectsMalformedHeader(t *testing.T) {
+	for _, header := range []string{
+		"## @name {string} Cluster name.",
+		"## @name Cluster name.",
+		"## @name",
+	} {
+		t.Run(header, func(t *testing.T) {
+			tmp := writeTempFile(`
+## @param {string} storageClass - Default StorageClass.
+storageClass: replicated
+
+` + header + `
+## @maxLength 32
+`)
+			defer os.Remove(tmp)
+
+			_, err := Parse(tmp)
+			require.ErrorContains(t, err, "malformed @name annotation")
+		})
+	}
+}
+
+// TestParseNameAfterParam pins that a @name following a @param closes that
+// @param out intact and does not borrow or lend constraints across the boundary.
+func TestParseNameAfterParam(t *testing.T) {
+	const yaml = `
+## @param {string} storageClass - Default StorageClass.
+## @minLength 1
+storageClass: replicated
+
+## @name {string} - Cluster name.
+## @maxLength 32
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+
+	root := Build(rows)
+	param, ok := root.Child["storageClass"]
+	require.True(t, ok, "@param above @name was dropped")
+	require.True(t, param.IsParam)
+	require.NotNil(t, param.MinLength)
+	require.Equal(t, int64(1), *param.MinLength)
+	require.Nil(t, param.MaxLength, "@name's constraint leaked onto the @param above")
+
+	require.NotNil(t, root.ResourceName)
+	require.Equal(t, int64(32), *root.ResourceName.MaxLength)
+	require.Nil(t, root.ResourceName.MinLength, "the @param's constraint leaked onto @name")
+}
+
+// TestParseNameRejectsUnsatisfiable rejects declarations under which no name
+// is valid, or whose pattern the consumer could not evaluate.
+func TestParseNameRejectsUnsatisfiable(t *testing.T) {
+	for _, tc := range []struct {
+		name, constraints, want string
+	}{
+		{"zero maxLength", "## @maxLength 0", "@maxLength 0 admits no name"},
+		{"minLength above maxLength", "## @minLength 10\n## @maxLength 5", "@minLength 10 exceeds @maxLength 5"},
+		{"non-RE2 pattern", "## @pattern ^(?!kube)[a-z]+$", "not a valid RE2 expression"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := writeTempFile("## @name {string} - Cluster name.\n" + tc.constraints + "\n")
+			defer os.Remove(tmp)
+
+			_, err := Parse(tmp)
+			require.ErrorContains(t, err, tc.want)
+			require.ErrorContains(t, err, ":1:", "error must point at the @name line")
+		})
+	}
+}

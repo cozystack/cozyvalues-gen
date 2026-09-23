@@ -158,7 +158,7 @@ so the misplacement is visible in `make generate` output. The warning never fail
 
 ### @name
 
-Declares a schema for the **resource's own name** — `metadata.name` of the object rendered from these values — rather than for a key inside `values.yaml`. It takes the same constraint tags as a `@param` (`@minLength`, `@maxLength`, `@pattern`) and must be declared as `{string}`, once per file.
+Declares a schema for the **resource's own name** — `metadata.name` of the object rendered from these values — rather than for a key inside `values.yaml`. It takes the string constraint tags a `@param` does — `@minLength`, `@maxLength` and `@pattern` — and must be declared as `{string}`, once per file. Generation fails on any other constraint or extension tag under it (`@maximum` typed for `@maxLength` would otherwise leave the name uncapped), on a malformed `@name` header, and on a declaration no name can satisfy: `@maxLength 0`, `@minLength` above `@maxLength`, or a `@pattern` that does not compile as RE2, the dialect the Cozystack API server evaluates it in.
 
 ```yaml
 ## @name {string} - Cluster name. Worker pools are separate releases named `kubernetes-nodes-<name>-<pool>`, so the name must leave room for the default `md0` pool inside the 53-character Helm release name limit.
