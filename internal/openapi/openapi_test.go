@@ -1484,6 +1484,31 @@ storageClass: ""
 // @param/@field. An annotation placed after @enum is silently dropped
 // because lastAnnotated is nil at that point. Documented so a future
 // contributor sees the test rather than the silent drop in production.
+func TestParseImmutable_BeforeFirstParamWarns(t *testing.T) {
+	const yaml = `
+## @immutable
+## @param {string} before - Marker on the line before the param.
+before: "a"
+`
+	tmp := writeTempFile(yaml)
+	defer os.Remove(tmp)
+
+	var warn bytes.Buffer
+	prev := WarnWriter
+	WarnWriter = &warn
+	defer func() { WarnWriter = prev }()
+
+	rows, err := Parse(tmp)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.False(t, rows[0].Immutable,
+		"@immutable before any @param has nothing to attach to")
+	require.Contains(t, warn.String(), "warning",
+		"@immutable with no preceding @param/@field must emit a diagnostic, not be silently dropped")
+	require.Contains(t, warn.String(), "@immutable",
+		"warning should name the annotation that was dropped")
+}
+
 func TestParseImmutable_AfterEnumIsDropped(t *testing.T) {
 	const yaml = `
 ## @enum {string} Mode - Operating mode
