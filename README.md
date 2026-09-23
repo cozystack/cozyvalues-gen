@@ -156,6 +156,27 @@ so the misplacement is visible in `make generate` output. The warning never fail
 
 `@immutable` is a flag (no argument). It emits a CEL `XValidation` rule (`self == oldSelf`) at the property level. **Caveat**: per Kubernetes `x-kubernetes-validations` semantics, a property-level rule is evaluated only when the property is present in both `oldSelf` and `self`. For optional/omitempty/pointer fields the rule therefore enforces *immutable once set* rather than *immutable from creation* — the field can still be added on a subsequent update if it was absent on create. To enforce *immutable from creation* make the field required (omit `[name]` brackets and pointer markers).
 
+### @name
+
+Declares a schema for the **resource's own name** — `metadata.name` of the object rendered from these values — rather than for a key inside `values.yaml`. It takes the string constraint tags a `@param` does — `@minLength`, `@maxLength` and `@pattern` — and must be declared as `{string}`, once per file. Generation fails on any other constraint or extension tag under it (`@maximum` typed for `@maxLength` would otherwise leave the name uncapped), on a malformed `@name` header, and on a declaration no name can satisfy: `@maxLength 0`, `@minLength` above `@maxLength`, or a `@pattern` that does not compile as RE2, the dialect the Cozystack API server evaluates it in.
+
+```yaml
+## @name {string} - Cluster name. Worker pools are separate releases named `kubernetes-nodes-<name>-<pool>`, so the name must leave room for the default `md0` pool inside the 53-character Helm release name limit.
+## @maxLength 32
+```
+
+produces, at the **root** of `values.schema.json`, beside `properties` rather than inside it:
+
+```json
+"x-cozystack-name": {
+  "type": "string",
+  "description": "Cluster name. Worker pools are separate releases named `kubernetes-nodes-<name>-<pool>`, so the name must leave room for the default `md0` pool inside the 53-character Helm release name limit.",
+  "maxLength": 32
+}
+```
+
+`@name` produces no values key, no Go struct field and no README row. It exists so that a consumer of the schema — the Cozystack aggregated API server, for one — can enforce a chart's own naming budget without knowing which chart it is reading; the `description` is what such a consumer surfaces to the user when the name is rejected, so write it as the explanation of the limit.
+
 ### Vendor extensions (`@x-...`)
 
 Attach an arbitrary OpenAPI/JSON-Schema **vendor extension keyword** (any key starting with `x-`) to a `@param` or `@field`. The directive name carries the keyword: `## @x-<keyword> <value>` emits `x-<keyword>: <value>` onto that property in the generated JSON schema. The value is parsed as YAML flow, so objects, arrays and scalars are all supported. This is a pure passthrough — no keyword is interpreted or hardcoded.

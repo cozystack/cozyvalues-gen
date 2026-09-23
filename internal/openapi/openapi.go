@@ -46,6 +46,7 @@ const (
 	kField
 	kTypedef
 	kEnum
+	kName
 )
 
 const (
@@ -122,6 +123,21 @@ var (
 
 	// Vendor extension directive (@x-<keyword>)
 	reVendorExtension = regexp.MustCompile(patterns.VendorExtensionPattern)
+
+	// Resource-name directive (@name), and the bare token that tells a
+	// malformed @name header apart from an ordinary comment.
+	reName      = regexp.MustCompile(patterns.NamePattern)
+	reNameToken = regexp.MustCompile(`^#{1,}\s+@name\b`)
+
+	// Constraint and extension directives the parser recognises but a
+	// resource name cannot carry: they describe numbers, lists, updates or
+	// arbitrary schema keywords, and marshalResourceName has nowhere to put
+	// them.
+	nameInapplicableREs = []*regexp.Regexp{
+		reMinimum, reMaximum, reExclusiveMinimum, reExclusiveMaximum,
+		reMinItems, reMaxItems, reImmutable, reVendorExtension, reExample,
+	}
+	reDirectiveToken = regexp.MustCompile(`^#{1,}\s+@(\S+)`)
 
 	allConstraintREs = []*regexp.Regexp{
 		reMinimum, reMaximum, reExclusiveMinimum, reExclusiveMaximum,
@@ -219,6 +235,8 @@ func Parse(file string) ([]Raw, error) {
 	// behaviour for every constraint family), but emit a warning so the
 	// misplacement is observable instead of silent.
 	var lastAnnotatedYAMLPassed bool
+	var seenName bool
+	var nameLine int
 
 	// finalizeLastAnnotated appends the last annotated item to output if it exists
 	finalizeLastAnnotated := func() {
@@ -265,6 +283,18 @@ func Parse(file string) ([]Raw, error) {
 			}
 			enumValues = append(enumValues, value)
 			continue
+		}
+
+		// A recognised directive that a name cannot carry would otherwise be
+		// accumulated and then dropped on output, so `@maximum 32` written
+		// for `@maxLength 32` would leave the name uncapped without a word.
+		if lastAnnotated != nil && lastAnnotated.K == kName {
+			for _, re := range nameInapplicableREs {
+				if re.MatchString(line) {
+					return nil, fmt.Errorf("%s:%d: @%s does not apply to @name, which takes only @minLength, @maxLength and @pattern",
+						filepath.Base(file), lineNum, reDirectiveToken.FindStringSubmatch(line)[1])
+				}
+			}
 		}
 
 		// Check for validation constraints (apply to lastAnnotated @param or @field).
@@ -374,6 +404,49 @@ func Parse(file string) ([]Raw, error) {
 			// silently dropped. Warn so the misplacement is observable, the
 			// same way a too-late constraint already is above.
 			emitWarn(file, lineNum, "@immutable has no preceding @param/@field on this line to attach to, move it after the @param/@field header instead")
+		}
+
+		// Check for @name. It declares a schema for the resource's own name,
+		// so it takes the lastAnnotated slot to collect the constraint lines
+		// that follow, but never becomes a values key.
+		if m := reName.FindStringSubmatch(line); m != nil {
+			finalizeLastAnnotated()
+			if currentEnum != nil {
+				currentEnum.Enums = enumValues
+				out = append(out, *currentEnum)
+				currentEnum = nil
+				enumValues = nil
+			}
+
+			if seenName {
+				return nil, fmt.Errorf("%s:%d: duplicate @name annotation", filepath.Base(file), lineNum)
+			}
+			seenName = true
+			nameLine = lineNum
+
+			typeExpr := strings.TrimSpace(m[1])
+			if typeExpr != "string" {
+				return nil, fmt.Errorf("%s:%d: @name must be declared as {string}, got {%s}", filepath.Base(file), lineNum, typeExpr)
+			}
+			desc := ""
+			if len(m) > 2 {
+				desc = m[2]
+			}
+
+			r := Raw{
+				K:           kName,
+				Path:        []string{"name"},
+				TypeExpr:    typeExpr,
+				Description: desc,
+			}
+			lastAnnotated = &r
+			continue
+		}
+		// Anything else opening with @name is a header the strict pattern did
+		// not match. Skipping it would hand the constraints below it to the
+		// @param above.
+		if reNameToken.MatchString(line) {
+			return nil, fmt.Errorf("%s:%d: malformed @name annotation, expected `## @name {string} - description`", filepath.Base(file), lineNum)
 		}
 
 		// Check for @param
@@ -521,7 +594,37 @@ func Parse(file string) ([]Raw, error) {
 		out = append(out, *currentEnum)
 	}
 
+	for _, r := range out {
+		if r.K != kName {
+			continue
+		}
+		if err := validateNameConstraints(r); err != nil {
+			return nil, fmt.Errorf("%s:%d: @name: %w", filepath.Base(file), nameLine, err)
+		}
+	}
+
 	return out, nil
+}
+
+// validateNameConstraints rejects a @name declaration that no name can
+// satisfy, which a consumer enforcing it would turn into a kind that accepts
+// no objects at all. The pattern is compiled with Go's regexp (RE2) because
+// that is what the consumer this directive exists for, the Cozystack API
+// server, evaluates it with; a lookahead is valid JSON Schema but would never
+// be enforced there.
+func validateNameConstraints(r Raw) error {
+	if r.MaxLength != nil && *r.MaxLength == 0 {
+		return fmt.Errorf("@maxLength 0 admits no name")
+	}
+	if r.MinLength != nil && r.MaxLength != nil && *r.MinLength > *r.MaxLength {
+		return fmt.Errorf("@minLength %d exceeds @maxLength %d", *r.MinLength, *r.MaxLength)
+	}
+	if r.Pattern != "" {
+		if _, err := regexp.Compile(r.Pattern); err != nil {
+			return fmt.Errorf("@pattern %q is not a valid RE2 expression: %w", r.Pattern, err)
+		}
+	}
+	return nil
 }
 
 /* -------------------------------------------------------------------------- */
@@ -567,6 +670,12 @@ type Node struct {
 
 	// Examples accumulated from `## @example` lines.
 	Examples []json.RawMessage
+
+	// ResourceName is set on the tree root only. It carries the schema an
+	// application declares for its own resource name via `## @name`, which
+	// describes metadata.name rather than a key inside values.yaml, and is
+	// emitted as the root-level x-cozystack-name extension.
+	ResourceName *Node
 }
 
 func newNode(name string, p *Node) *Node {
@@ -626,6 +735,15 @@ func Build(rows []Raw) *Node {
 			cur.Comment = r.Description
 			cur.TypeExpr = r.TypeExpr
 			cur.Enums = r.Enums
+			continue
+		}
+
+		if r.K == kName {
+			n := newNode("name", nil)
+			n.TypeExpr = r.TypeExpr
+			n.Comment = r.Description
+			copyConstraints(n, &r)
+			root.ResourceName = n
 			continue
 		}
 
@@ -1580,6 +1698,31 @@ func (m *orderedMap) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// resourceNameExtension is the root-level schema key under which a `## @name`
+// declaration is published. It sits beside "properties" rather than inside it
+// because it constrains the resource's metadata.name, not a values key, and
+// carries the "x-" prefix so JSON Schema validators ignore it.
+const resourceNameExtension = "x-cozystack-name"
+
+// marshalResourceName renders a @name node as the JSON object published under
+// resourceNameExtension, indented to sit at the top level of the schema file.
+func marshalResourceName(n *Node) ([]byte, error) {
+	out := struct {
+		Type        string `json:"type"`
+		Description string `json:"description,omitempty"`
+		MinLength   *int64 `json:"minLength,omitempty"`
+		MaxLength   *int64 `json:"maxLength,omitempty"`
+		Pattern     string `json:"pattern,omitempty"`
+	}{
+		Type:        "string",
+		Description: n.Comment,
+		MinLength:   n.MinLength,
+		MaxLength:   n.MaxLength,
+		Pattern:     n.Pattern,
+	}
+	return json.MarshalIndent(out, "  ", "  ")
+}
+
 func WriteValuesSchema(crdBytes []byte, outPath string) error {
 	return WriteValuesSchemaWithOrder(crdBytes, outPath, nil)
 }
@@ -1607,6 +1750,13 @@ func WriteValuesSchemaWithOrder(crdBytes []byte, outPath string, root *Node) err
 		buf.WriteString("{\n")
 		buf.WriteString("  \"title\": \"Chart Values\",\n")
 		buf.WriteString("  \"type\": \"object\",\n")
+		if root.ResourceName != nil {
+			nameJSON, err := marshalResourceName(root.ResourceName)
+			if err != nil {
+				return err
+			}
+			buf.WriteString(fmt.Sprintf("  \"%s\": %s,\n", resourceNameExtension, string(nameJSON)))
+		}
 		buf.WriteString("  \"properties\": {\n")
 
 		first := true
